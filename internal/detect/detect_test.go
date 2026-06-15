@@ -102,6 +102,40 @@ func TestDetect_NoLanguages(t *testing.T) {
 	}
 }
 
+// The registry is assembled from each lang_<name>.go file's init(); a language
+// contributing skipDirs (here rust's "target") must have them honored by a scan, and
+// re-registering an existing name must fail loudly rather than shadow it. This pins
+// the "add a file to add a language" contract.
+func TestRegistry_SelfRegistrationAndSkipDirs(t *testing.T) {
+	// Every language file registered exactly once, and its skipDirs were merged.
+	if len(registry) == 0 {
+		t.Fatal("registry is empty: no language self-registered")
+	}
+	if !skipDirs["target"] {
+		t.Error(`rust's "target" skipDir was not merged into skipDirs`)
+	}
+
+	// A marker buried under a language-contributed skip dir must be ignored.
+	res, err := Detect(fstest.MapFS{
+		"rs/Cargo.toml":                {},
+		"rs/target/dep/pyproject.toml": {}, // inside rust's skipDir → ignored
+	}, allMissing)
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	if _, ok := unit(res, "python"); ok {
+		t.Error("python detected inside rust's target/ skipDir; should be skipped")
+	}
+
+	// Duplicate registration is a programming error and must panic.
+	defer func() {
+		if recover() == nil {
+			t.Error("registering a duplicate language name did not panic")
+		}
+	}()
+	register(langSpec{name: "go"})
+}
+
 func TestRender(t *testing.T) {
 	r := &Result{Languages: []Language{{
 		Name: "go", Dir: ".", PackageManager: "go modules",

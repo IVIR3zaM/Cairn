@@ -78,6 +78,10 @@ docs/
 ```
 (Source layout under the bounded contexts appears as iterations add it.)
 
+**Adding a language** is a one-file change: drop `internal/detect/lang_<name>.go`
+self-registering its markers/tools/skip-dirs (see ARCHITECTURE "Adding a language or
+standard"). Nothing about a language is hardcoded in the detection engine.
+
 ## How to work on this project
 
 1. Skim ARCHITECTURE only if the iteration touches a context you haven't seen.

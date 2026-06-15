@@ -30,7 +30,8 @@ errors; in-code defaults so a minimal file works; a `LoadOrDefault(path)`.
 ## [x] 2 — Detection + `doctor`
 **Goal:** Detect languages, dirs, package managers, and which standard tools are installed.
 **Read:** AGENTS.md · docs/ARCHITECTURE.md (Detection) · internal/config
-**Steps:** A `registry` mapping each language → marker files + default tools. Scan the
+**Steps:** A pluggable registry where each language self-registers from its own
+`internal/detect/lang_<name>.go` (marker files + default tools + skip dirs). Scan the
 repo; resolve installed tools via `exec.LookPath`. Implement `cairn doctor` to print a
 per-language installed/missing table with install hints.
 **Acceptance:** On fixture repos (one per language) detection is correct; `doctor` lists

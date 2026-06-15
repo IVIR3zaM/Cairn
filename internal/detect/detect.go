@@ -3,8 +3,9 @@
 // and which of that language's standard tools are installed on the machine.
 //
 // It depends only on an fs.FS (the repo) and a LookupFunc (tool resolution) so it
-// stays pure and is testable with a fake filesystem and lookup. The language
-// registry below is the single source of truth shared by detection and docs.
+// stays pure and is testable with a fake filesystem and lookup. Languages are not
+// hardcoded here: each self-registers from its own lang_<name>.go file via the
+// registry (see registry.go and docs/ARCHITECTURE.md "Adding a language").
 package detect
 
 import (
@@ -16,92 +17,6 @@ import (
 // LookupFunc resolves an executable name to a path, matching exec.LookPath. A
 // non-nil error means the tool is not installed.
 type LookupFunc func(string) (string, error)
-
-// Tool is one standard tool for a language, with an install hint shown when missing.
-type Tool struct {
-	Name string
-	Hint string
-}
-
-// marker is a filename that signals a language, plus the package manager it implies.
-type marker struct {
-	file string
-	pm   string
-}
-
-// langSpec is a registry entry: how to detect a language and what it expects.
-type langSpec struct {
-	name    string
-	markers []marker
-	tools   []Tool
-}
-
-// registry is the single source of truth for language detection. Adding a language
-// is one entry here (see docs/ARCHITECTURE.md "Adding a language or standard").
-var registry = []langSpec{
-	{
-		name:    "go",
-		markers: []marker{{"go.mod", "go modules"}},
-		tools: []Tool{
-			{"gofumpt", "go install mvdan.cc/gofumpt@latest"},
-			{"golangci-lint", "https://golangci-lint.run/usage/install/"},
-			{"go", "https://go.dev/dl/"},
-		},
-	},
-	{
-		name: "python",
-		markers: []marker{
-			{"pyproject.toml", "pip"},
-			{"setup.py", "pip"},
-			{"requirements.txt", "pip"},
-		},
-		tools: []Tool{
-			{"ruff", "pip install ruff"},
-			{"python3", "https://www.python.org/downloads/"},
-		},
-	},
-	{
-		name:    "rust",
-		markers: []marker{{"Cargo.toml", "cargo"}},
-		tools: []Tool{
-			{"cargo", "https://rustup.rs"},
-			{"rustfmt", "rustup component add rustfmt"},
-			{"clippy-driver", "rustup component add clippy"},
-		},
-	},
-	{
-		name:    "javascript",
-		markers: []marker{{"package.json", "npm"}},
-		tools: []Tool{
-			{"node", "https://nodejs.org"},
-			{"npx", "https://nodejs.org"},
-		},
-	},
-	{
-		name: "java",
-		markers: []marker{
-			{"pom.xml", "maven"},
-			{"build.gradle", "gradle"},
-			{"build.gradle.kts", "gradle"},
-		},
-		tools: []Tool{{"java", "https://adoptium.net"}},
-	},
-	{
-		name:    "dart",
-		markers: []marker{{"pubspec.yaml", "pub"}},
-		tools:   []Tool{{"dart", "https://dart.dev/get-dart"}},
-	},
-}
-
-// skipDirs are never descended into during a scan: VCS metadata and build/dep output.
-var skipDirs = map[string]bool{
-	".git":         true,
-	"node_modules": true,
-	"vendor":       true,
-	"target":       true,
-	"build":        true,
-	".dart_tool":   true,
-}
 
 // ToolStatus pairs a language's tool with whether it was found on the machine.
 type ToolStatus struct {

@@ -110,10 +110,21 @@ cairn.yaml → Wiring installs hook + generates CI → Reporter prints next step
 
 ## Adding a language or standard (extension point)
 
-A new language = one adapter file per port it needs (usually format/lint/test) plus a
-detection entry (the marker files). A new standard = one adapter implementing the
-relevant port (e.g. a `changelog/gitcliff`). No core changes. Document the markers and
-the default tool in a single registry file so detection and docs stay in sync.
+Languages are **pluggable, one file per language** — nothing about a language is
+hardcoded in the detection engine. To add a language:
+
+1. **Detection:** drop a new `internal/detect/lang_<name>.go` whose `init()` calls
+   `register(langSpec{…})` with the language's marker files (→ package manager), its
+   standard tools (+ install hints), and any generated dirs to skip (e.g. `target`,
+   `node_modules`). That single file is the whole source of truth for detecting the
+   language; `register` self-assembles the registry and the scan's skip-dir set, and
+   panics on a duplicate name. No edits to `detect.go` or any central list.
+2. **Quality:** add one adapter file per port it needs (usually format/lint/test) under
+   `internal/quality/<name>` wrapping its in-market tools. No core changes.
+
+A new *standard* = one adapter implementing the relevant port (e.g. a
+`changelog/gitcliff`). The `lang_<name>.go` files and this section are the only places
+that describe a language, so detection and docs stay in sync.
 
 ## Implementation notes
 

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Detection languages are now pluggable, one self-registering file per language
+  (`internal/detect/lang_<name>.go`) instead of a hardcoded central list. Each file
+  owns its markers, tools, and skip dirs and calls `register(...)` from `init()`;
+  adding a language is adding a file, with no edits to the detection engine.
+
 ### Added
 - Cross-cutting ports: `ToolRunner` (`internal/runner`) with an `Exec` adapter that
   captures stdout/stderr/exit-code and honors cwd + timeout, plus a `Fake` for tests;
