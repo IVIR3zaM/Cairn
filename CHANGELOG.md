@@ -27,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   adding a language is adding a file, with no edits to the detection engine.
 
 ### Added
+- JavaScript/TypeScript quality adapter (`internal/quality/lang_javascript.go`) supporting
+  both `eslint` (prettier + eslint) and `biome` standards via `npx`, with tests run through
+  `npm test`; every stage gates on `npx` and it self-registers into `cairn verify`.
 - Python quality adapter (`internal/quality/lang_python.go`) supporting both ruff (modern
   single-tool) and black+flake8 (traditional pair) standards via per-language config;
   self-registered into `cairn verify`.

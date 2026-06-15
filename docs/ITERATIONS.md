@@ -76,7 +76,7 @@ adapters to one self-registering file per language in the `quality` package — 
 **Steps:** `internal/quality/lang_python.go` honoring `standard` (ruff default; black+flake8).
 **Acceptance:** Green + failing fixtures pass/fail; standard switch picks the right tools.
 
-### [ ] 5c — TS/JS adapter (eslint; biome)
+### [x] 5c — TS/JS adapter (eslint; biome)
 **Read:** AGENTS.md · docs/ARCHITECTURE.md (tool matrix) · internal/quality/lang_rust.go (template) · internal/config
 **Steps:** `internal/quality/lang_javascript.go` honoring `standard` (eslint/prettier; biome) via npx.
 **Acceptance:** Green + failing fixtures pass/fail; standard switch picks the right tools.
