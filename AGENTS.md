@@ -23,6 +23,12 @@ the design.
    coverage with trivial struct/getter tests.
 5. **UX is a feature.** Output is colorful but *concise*: a tight summary with status
    glyphs (✓ ✗ ⊘ !), not walls of logs. Full logs only behind `--verbose`.
+6. **Test-first (TDD).** Write the failing test before the code, then build the
+   implementation around it (red → green → refactor). But tests must not repeat
+   themselves: each test has a single, distinct target — one behavior, edge case, or
+   contract — and asserts only that. If a new test would mostly restate an existing one,
+   strengthen the existing test instead of adding a near-duplicate. Favor a few sharp,
+   intention-revealing tests over many overlapping ones.
 
 ## Token-frugal working protocol (important)
 
