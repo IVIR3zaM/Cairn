@@ -36,7 +36,7 @@ per-language installed/missing table with install hints.
 **Acceptance:** On fixture repos (one per language) detection is correct; `doctor` lists
 present vs missing tools. Tests use a fake filesystem/lookup.
 
-## [ ] 3 — ToolRunner + Reporter ports
+## [x] 3 — ToolRunner + Reporter ports
 **Goal:** The two cross-cutting ports, with real + fake implementations.
 **Read:** AGENTS.md · docs/ARCHITECTURE.md (Ports, UX/Reporter)
 **Steps:** `ToolRunner` (cwd, timeout, captured output, exit code). `Reporter` port with

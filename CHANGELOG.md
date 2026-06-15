@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Cross-cutting ports: `ToolRunner` (`internal/runner`) with an `Exec` adapter that
+  captures stdout/stderr/exit-code and honors cwd + timeout, plus a `Fake` for tests;
+  and the `Reporter` UX port (`internal/report`) rendering glyph steps and a compact
+  summary, honoring color/`NO_COLOR`/`--quiet`/`--verbose`/non-TTY.
 - Detection domain (`internal/detect`): a language registry scanning the repo for
   marker files to find languages, dirs, and package managers, resolving each
   language's standard tools via lookup; `cairn doctor` renders the installed/missing
