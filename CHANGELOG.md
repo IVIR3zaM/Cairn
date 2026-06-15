@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   adding a language is adding a file, with no edits to the detection engine.
 
 ### Added
+- Rust quality adapter (`internal/quality/rust`) wrapping `cargo fmt`, `cargo clippy`
+  (warnings as errors), and `cargo test`, wired into `cairn verify`.
 - QualityGate (`internal/quality`) and a Go adapter (`internal/quality/go`): `cairn
   verify` builds an ordered per-language plan (format → lint → typecheck → test →
   build), runs each stage's tool through the `ToolRunner`, and renders a compact

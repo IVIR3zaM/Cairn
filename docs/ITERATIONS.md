@@ -55,14 +55,39 @@ with hint; wire `cairn verify`.
 **Acceptance:** Green Go fixture ⇒ pass; fixture with a lint/format/test error ⇒ non-zero
 with a compact failing summary; missing tool degrades per `required`.
 
-## [ ] 5 — Remaining language adapters
-**Goal:** `verify` supports Java, TS/JS, Rust, Dart, Python.
-**Read:** AGENTS.md · docs/ARCHITECTURE.md (tool matrix) · internal/quality/go (as template)
-**Steps:** One thin adapter per language wrapping its matrix tools (see ARCHITECTURE);
-respect per-language `standard` choice (e.g. ruff vs black+flake8, eslint vs biome).
-Split into sub-iterations (5a…5f) if large.
-**Acceptance:** Each language has a green + a failing fixture passing/failing correctly;
-adapters are thin and tested with the fake ToolRunner.
+## 5 — Remaining language adapters (split)
+**Goal:** `verify` supports Rust, Python, TS/JS, Java, Dart — one thin adapter each,
+mirroring `internal/quality/go`, wired into `internal/cli/verify.go`'s `adapters` map.
+Respect per-language `standard` choice where it exists (ruff vs black+flake8, eslint vs
+biome). Each adapter is tested with the fake ToolRunner (green + failing). Split below.
+
+### [x] 5a — Rust adapter
+**Read:** AGENTS.md · docs/ARCHITECTURE.md (tool matrix) · internal/quality/go (template) · internal/cli/verify.go
+**Steps:** `internal/quality/rust` wrapping `cargo fmt` (format), `cargo clippy -D warnings`
+(lint), `cargo test` (test); gate tools rustfmt/clippy-driver/cargo (matching detection);
+wire into the `adapters` map.
+**Acceptance:** Fake-ToolRunner tests cover format check/fix, lint & test exit-code mapping,
+and a start error; `rust` is selectable in `verify`.
+
+### [ ] 5b — Python adapter (ruff; black+flake8)
+**Read:** AGENTS.md · docs/ARCHITECTURE.md (tool matrix) · internal/quality/{go,rust} (templates) · internal/cli/verify.go · internal/config
+**Steps:** `internal/quality/python` honoring `standard` (ruff default; black+flake8).
+**Acceptance:** Green + failing fixtures pass/fail; standard switch picks the right tools.
+
+### [ ] 5c — TS/JS adapter (eslint; biome)
+**Read:** AGENTS.md · docs/ARCHITECTURE.md (tool matrix) · internal/quality/{go,rust} (templates) · internal/cli/verify.go · internal/config
+**Steps:** `internal/quality/javascript` honoring `standard` (eslint/prettier; biome) via npx.
+**Acceptance:** Green + failing fixtures pass/fail; standard switch picks the right tools.
+
+### [ ] 5d — Java adapter
+**Read:** AGENTS.md · docs/ARCHITECTURE.md (tool matrix) · internal/quality/{go,rust} (templates) · internal/cli/verify.go
+**Steps:** `internal/quality/java` wrapping the build tool (maven/gradle) for format/test.
+**Acceptance:** Green + failing fixtures pass/fail.
+
+### [ ] 5e — Dart adapter
+**Read:** AGENTS.md · docs/ARCHITECTURE.md (tool matrix) · internal/quality/{go,rust} (templates) · internal/cli/verify.go
+**Steps:** `internal/quality/dart` wrapping `dart format`/`dart analyze`/`dart test`.
+**Acceptance:** Green + failing fixtures pass/fail.
 
 ## [ ] 6 — Versioning + doc honesty + `bump`
 **Goal:** `cairn bump` and the version_sync honesty check (Cairn's signature).

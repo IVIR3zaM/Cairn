@@ -10,6 +10,7 @@ import (
 	"github.com/IVIR3zaM/Cairn/internal/detect"
 	"github.com/IVIR3zaM/Cairn/internal/quality"
 	golang "github.com/IVIR3zaM/Cairn/internal/quality/go"
+	"github.com/IVIR3zaM/Cairn/internal/quality/rust"
 	"github.com/IVIR3zaM/Cairn/internal/report"
 	"github.com/IVIR3zaM/Cairn/internal/runner"
 	"github.com/spf13/cobra"
@@ -18,7 +19,8 @@ import (
 // adapters maps a detected language to its quality adapter. Wiring a new language's
 // adapter (iteration 5) is a one-line entry here.
 var adapters = map[string]func(runner.ToolRunner) quality.Adapter{
-	"go": func(r runner.ToolRunner) quality.Adapter { return golang.New(r) },
+	"go":   func(r runner.ToolRunner) quality.Adapter { return golang.New(r) },
+	"rust": func(r runner.ToolRunner) quality.Adapter { return rust.New(r) },
 }
 
 // errVerifyFailed makes verify exit non-zero. The compact summary already explains
