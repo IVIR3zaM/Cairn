@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Buildable Go CLI skeleton (cobra): `cairn --version` and a `doctor` stub, plus
+  `tool/verify.sh` and a GitHub Actions CI running build/test/lint.
 - Project scaffold: vision README, DDD/hexagonal `docs/ARCHITECTURE.md`, contributor
   guide `AGENTS.md`, the iterative build plan `docs/ITERATIONS.md`, the reusable
   next-iteration prompt `docs/PROMPT.md`, an example `cairn.yaml`, and licensing.

@@ -11,7 +11,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done.
 
 ---
 
-## [ ] 0 — Scaffolding
+## [x] 0 — Scaffolding
 **Goal:** A buildable Go CLI skeleton with `cairn --version` and `cairn doctor` stubs.
 **Read:** AGENTS.md
 **Steps:** `go mod init`; add cobra; root command + `version`; empty `doctor` printing
