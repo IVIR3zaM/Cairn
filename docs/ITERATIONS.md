@@ -71,7 +71,7 @@ detection); self-register via `register("rust", …)`.
 and the stage→tool gating; `rust` is selectable in `verify`. *(Also refactored quality
 adapters to one self-registering file per language in the `quality` package — see ADR-006.)*
 
-### [ ] 5b — Python adapter (ruff; black+flake8)
+### [x] 5b — Python adapter (ruff; black+flake8)
 **Read:** AGENTS.md · docs/ARCHITECTURE.md (tool matrix) · internal/quality/lang_rust.go (template) · internal/config
 **Steps:** `internal/quality/lang_python.go` honoring `standard` (ruff default; black+flake8).
 **Acceptance:** Green + failing fixtures pass/fail; standard switch picks the right tools.

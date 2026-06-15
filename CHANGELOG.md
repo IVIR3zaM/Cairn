@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Quality adapters now accept a per-language `standard` parameter (e.g. "ruff" or
+  "black+flake8" for Python) to select between multiple tool choices; the registry
+  signature changed to `func(runner.ToolRunner, string) Adapter` and `AdapterFor`
+  resolves adapters with the standard from `cairn.yaml`.
 - Quality adapters are now self-registering, one file per language
   (`internal/quality/lang_<name>.go`) inside the `quality` package, mirroring detection.
   Each calls `register(name, ctor)` in `init()` and `cairn verify` resolves them via

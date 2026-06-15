@@ -10,6 +10,8 @@ func init() {
 		},
 		tools: []Tool{
 			{"ruff", "pip install ruff"},
+			{"black", "pip install black"},
+			{"flake8", "pip install flake8"},
 			{"python3", "https://www.python.org/downloads/"},
 		},
 	})

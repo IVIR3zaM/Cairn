@@ -10,7 +10,7 @@ import (
 // stepOf returns the registered adapter's step of the given kind, also exercising the
 // self-registration: an unregistered language would make AdapterFor return false.
 func stepOf(lang string, f *runner.Fake, k Kind) Step {
-	a, ok := AdapterFor(lang, f)
+	a, ok := AdapterFor(lang, f, "")
 	if !ok {
 		return nil
 	}

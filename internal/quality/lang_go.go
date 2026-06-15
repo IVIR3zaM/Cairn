@@ -12,7 +12,7 @@ import (
 // This file is the whole source of truth for verifying Go — drop a sibling lang_<x>.go
 // to add a language, with no edits to the gate or the CLI.
 func init() {
-	register("go", func(run runner.ToolRunner) Adapter {
+	register("go", func(run runner.ToolRunner, _ string) Adapter {
 		return adapter{run: run, specs: []stepSpec{
 			{kind: Format, tool: "gofumpt", exec: goFormat},
 			{kind: Lint, tool: "golangci-lint", exec: goLint},

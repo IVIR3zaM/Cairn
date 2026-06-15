@@ -10,7 +10,7 @@ import (
 // tool per stage matches detection (rustfmt/clippy-driver/cargo) so a missing component
 // degrades the right stage even though the invocation is always cargo.
 func init() {
-	register("rust", func(run runner.ToolRunner) Adapter {
+	register("rust", func(run runner.ToolRunner, _ string) Adapter {
 		return adapter{run: run, specs: []stepSpec{
 			{kind: Format, tool: "rustfmt", exec: rustFormat},
 			{kind: Lint, tool: "clippy-driver", exec: rustLint},
