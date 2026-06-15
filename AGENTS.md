@@ -78,12 +78,14 @@ docs/
 ```
 (Source layout under the bounded contexts appears as iterations add it.)
 
-**Adding a language** is a two-file change, no central edits: drop
-`internal/detect/lang_<name>.go` (self-registers markers/tools/skip-dirs) and
-`internal/quality/lang_<name>.go` (self-registers its verify stages via `register(name,
-ctor)`). Both contexts use the same `init()`-registration pattern; `cairn verify`
-resolves adapters through `quality.AdapterFor`, so there is no `adapters` map to touch.
-See ARCHITECTURE "Adding a language or standard".
+**Pluggability is the repo-wide pattern.** Every multi-implementation choice — a
+language, a manifest, a changelog/commit/CI standard — is a registry whose entries
+self-register in `init()` and are resolved via a `…For(key)` lookup; you add one by
+dropping a file in the context's package, never by editing an engine, a central map, or a
+`switch`. E.g. **adding a language** is a two-file change: `internal/detect/lang_<name>.go`
+(markers/tools/skip-dirs) and `internal/quality/lang_<name>.go` (verify stages via
+`register(name, ctor)`); `cairn verify` finds it through `quality.AdapterFor`. See
+ARCHITECTURE "Extension points: pluggable by self-registration" for the registry table.
 
 ## How to work on this project
 

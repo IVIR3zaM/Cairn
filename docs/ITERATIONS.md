@@ -49,9 +49,9 @@ ANSI; ToolRunner captures exit/output correctly.
 ## [x] 4 — QualityGate + Go adapter (`verify` end-to-end)
 **Goal:** `cairn verify` works fully for one language (Go), proving the whole spine.
 **Read:** AGENTS.md · docs/ARCHITECTURE.md (QualityGate) · internal/{config,detect,runner,report}
-**Steps:** Step ports (Formatter/Linter/Tester/…); a `quality/go` adapter wrapping
-gofumpt/golangci-lint/go test; ordered plan builder; missing-tool ⇒ required vs warn+skip
-with hint; wire `cairn verify`.
+**Steps:** Step ports (Formatter/Linter/Tester/…); a Go adapter
+(`internal/quality/lang_go.go`) wrapping gofumpt/golangci-lint/go test; ordered plan
+builder; missing-tool ⇒ required vs warn+skip with hint; wire `cairn verify`.
 **Acceptance:** Green Go fixture ⇒ pass; fixture with a lint/format/test error ⇒ non-zero
 with a compact failing summary; missing tool degrades per `required`.
 
@@ -63,7 +63,7 @@ Each `init()` calls `register(name, ctor)` (no `adapters` map; `verify` resolves
 biome) as a branch inside the file. Tested with the fake ToolRunner. Split below.
 
 ### [x] 5a — Rust adapter
-**Read:** AGENTS.md · docs/ARCHITECTURE.md (tool matrix) · internal/quality/go (template) · internal/cli/verify.go
+**Read:** AGENTS.md · docs/ARCHITECTURE.md (tool matrix, extension points) · internal/quality/lang_go.go (template) · internal/cli/verify.go
 **Steps:** `internal/quality/lang_rust.go` wrapping `cargo fmt` (format), `cargo clippy
 -D warnings` (lint), `cargo test` (test); gate tools rustfmt/clippy-driver/cargo (matching
 detection); self-register via `register("rust", …)`.
@@ -93,44 +93,54 @@ adapters to one self-registering file per language in the `quality` package — 
 
 ## [ ] 6 — Versioning + doc honesty + `bump`
 **Goal:** `cairn bump` and the version_sync honesty check (Cairn's signature).
-**Read:** AGENTS.md · docs/ARCHITECTURE.md (Versioning, data flow) · internal/{config,report}
-**Steps:** SemVer (+CalVer) math; per-manifest `VersionManager` (delegate to native
-tooling where it exists, else safe regex); version_sync rewrite + a non-mutating honesty
-assertion wired into `verify`; `cairn bump` prints suggested commit/tag, never commits.
+**Read:** AGENTS.md · docs/ARCHITECTURE.md (Versioning, data flow, extension points) · internal/{config,report}
+**Steps:** SemVer (+CalVer) math; per-manifest `VersionManager` as a **self-registering
+registry** (`internal/version/manifest_<name>.go`, `register`/`ManagerFor`, panic on dup),
+each delegating to native tooling where it exists else safe regex — no central manifest
+map; version_sync rewrite + a non-mutating honesty assertion wired into `verify`; `cairn
+bump` prints suggested commit/tag, never commits.
 **Acceptance:** `bump` updates manifests + doc patterns; `verify` fails on drifted docs;
-downgrade and empty-version cases are guarded. Tests cover the math + sync.
+downgrade and empty-version cases are guarded. Tests cover the math + sync; adding a
+manifest is one self-registering file (no engine edits).
 
 ## [ ] 7 — Changelog (Keep a Changelog)
 **Goal:** Promote `[Unreleased]` → version+date with refreshed compare links on `bump`.
-**Read:** AGENTS.md · docs/ARCHITECTURE.md (Changelog) · internal/version
-**Steps:** `changelog/keepachangelog` adapter; integrate into `bump`; warn on empty
-`[Unreleased]`. Leave `git-cliff`/`conventional-changelog` as documented future adapters.
+**Read:** AGENTS.md · docs/ARCHITECTURE.md (Changelog, extension points) · internal/version
+**Steps:** Stand up the changelog **standard registry** (`internal/changelog`,
+`register`/`WriterFor`) and add the keepachangelog writer as `std_keepachangelog.go`
+(self-registered, not a special case); integrate into `bump`; warn on empty
+`[Unreleased]`. `git-cliff`/`conventional-changelog` are future `std_<name>.go` files —
+documented, not stubbed.
 **Acceptance:** A sample CHANGELOG is promoted correctly (idempotent, links updated);
-empty-Unreleased warns.
+empty-Unreleased warns; `WriterFor("keepachangelog")` resolves via self-registration.
 
 ## [ ] 8 — Commit conventions + commit-msg hook + bump inference
 **Goal:** Validate commit messages and infer the SemVer bump from history.
-**Read:** AGENTS.md · docs/ARCHITECTURE.md (CommitConventions) · internal/version
-**Steps:** `CommitValidator` for Conventional Commits (+ optional gitmoji/sign-off);
-classify feat/fix/breaking; `cairn bump` (no level) infers the next version from commits
-since the last tag.
+**Read:** AGENTS.md · docs/ARCHITECTURE.md (CommitConventions, extension points) · internal/version
+**Steps:** `CommitValidator` as a **convention registry** (`internal/commit`,
+`register`/`ValidatorFor`); add `conv_conventional.go` (self-registered), leaving
+gitmoji/none as future `conv_<name>.go` files; classify feat/fix/breaking; optional
+sign-off; `cairn bump` (no level) infers the next version from commits since the last tag.
 **Acceptance:** Valid/invalid messages classified correctly; inference picks the right
-level on a fixture history.
+level on a fixture history; the convention resolves via `ValidatorFor` per config.
 
 ## [ ] 9 — Wiring: hooks + CI generation
 **Goal:** `init`'s outputs — install git hooks and generate a CI workflow calling `verify`.
-**Read:** AGENTS.md · docs/ARCHITECTURE.md (Wiring) · internal/config
+**Read:** AGENTS.md · docs/ARCHITECTURE.md (Wiring, extension points) · internal/config
 **Steps:** Install pre-commit (`cairn verify`) and optional commit-msg hooks via a tracked
-hooks dir + `core.hooksPath`; generate a GitHub Actions workflow; structure for other CI
-providers later.
-**Acceptance:** Hooks installed and runnable; generated workflow is valid and runs
-`cairn verify`; re-running is idempotent.
+hooks dir + `core.hooksPath`; make CI providers a **self-registering registry**
+(`internal/wiring/ci_<name>.go`, `register`/`ProviderFor`) and add `ci_github.go` as the
+first entry — other providers are later one-file additions, not a `switch`.
+**Acceptance:** Hooks installed and runnable; generated GitHub workflow is valid and runs
+`cairn verify`; re-running is idempotent; `ProviderFor("github")` resolves via self-registration.
 
 ## [ ] 10 — Onboarding wizard (`init`)
 **Goal:** The headline UX: a fast, friendly `cairn init`.
-**Read:** AGENTS.md · docs/ARCHITECTURE.md (Onboarding) · internal/{detect,config,wiring,report}
+**Read:** AGENTS.md · docs/ARCHITECTURE.md (Onboarding, extension points) · internal/{detect,config,wiring,report}
 **Steps:** Detect → show findings → multiselect features + standards (smart defaults from
 detection) → write `cairn.yaml` → run Wiring → print next steps. `--yes` non-interactive.
+The choosable standards/providers come from the registries (changelog/commit/CI), so a
+newly registered standard appears in the wizard without touching it.
 **Acceptance:** `cairn init --yes` produces a valid config + hook + CI in a sample repo in
 seconds; interactive run is navigable and concise.
 

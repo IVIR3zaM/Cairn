@@ -43,7 +43,8 @@ library, and a Python project.
 ## Supported languages
 
 Java · TypeScript/JavaScript · Go · Rust · Dart/Flutter · Python
-*(adding another is a single small adapter — see [ARCHITECTURE](docs/ARCHITECTURE.md).)*
+*(adding another is two self-registering files, no central edits — see
+[ARCHITECTURE](docs/ARCHITECTURE.md) "Extension points".)*
 
 ## Standards — opinionated defaults you can swap
 

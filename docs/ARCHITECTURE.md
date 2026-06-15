@@ -43,10 +43,11 @@ a concrete tool.
   (feat/fix/breaking) for bump inference.
 - `Reporter` — the UX port (start/step/summary/error); has a TTY and a plain impl.
 
-Adapters are thin and individually testable with a fake `ToolRunner`. Quality adapters
-are self-registering files inside the `quality` package (`internal/quality/lang_<name>.go`,
-see the extension-point section below); other contexts name their adapters
-`<context>/<tool>`, e.g. `version/cargo`, `changelog/keepachangelog`.
+Adapters are thin and individually testable with a fake `ToolRunner`. Wherever a port has
+more than one implementation, those implementations live as self-registering files inside
+their context's package and are resolved through a registry — never a central map. This
+is the repo-wide pattern; see "Extension points: pluggable by self-registration" below for
+the registry table and the recipe.
 
 ## The config aggregate — `cairn.yaml`
 
@@ -109,33 +110,51 @@ Never commits automatically.`
 `Detection → wizard (multiselect features + standards, smart defaults) → write
 cairn.yaml → Wiring installs hook + generates CI → Reporter prints next steps.`
 
-## Adding a language or standard (extension point)
+## Extension points: pluggable by self-registration (repo-wide pattern)
 
-Languages are **pluggable, one self-registering file per context** — nothing about a
-language is hardcoded in an engine or a central list. Both the detection and quality
-contexts use the same `init()`-registers-itself pattern, so adding a language is dropping
-two sibling files and editing nothing else (no engine, no CLI `adapters` map):
+**This is the one extension pattern Cairn uses everywhere.** Any place the design admits
+more than one implementation — a language, a manifest format, a changelog/commit/CI
+standard — is a **registry** that implementations plug into by self-registering, never a
+hardcoded list or a `switch` that grows per case. The rule:
 
-1. **Detection:** drop `internal/detect/lang_<name>.go` whose `init()` calls
-   `register(langSpec{…})` with the language's marker files (→ package manager), its
-   standard tools (+ install hints), and any generated dirs to skip (e.g. `target`,
-   `node_modules`). `register` self-assembles the detection registry and the scan's
-   skip-dir set, and panics on a duplicate name.
-2. **Quality:** drop `internal/quality/lang_<name>.go` whose `init()` calls
-   `register(name, ctor)` with a `[]stepSpec` (kind + gating tool + exec) wrapping the
-   language's in-market tools. The shared `adapter`/`step` plumbing and the
-   `passOrFail`/`output` helpers live in `adapter.go`, so a language file is just its
-   stages. `cairn verify` resolves the adapter through `quality.AdapterFor(name, run)` —
-   there is no per-language package and no central registration table.
+> Each implementation lives in its own file in the context's package and registers itself
+> in `init()` via that context's `register(key, …)`. A registry exposes a `…For(key)`
+> resolver (one implementation) and a lister of registered keys (so the `init` wizard and
+> `doctor` enumerate choices without a hardcoded list). Adding one is dropping one file;
+> **no engine, central map, or CLI wiring is edited.** `register` panics on a duplicate key.
 
-Both registries live in the same package as their engine (mirroring `internal/detect`),
-which is why `init()` self-registration works without blank imports.
+Why it works and why it's uniform: the registry and its implementations share the
+context's package (mirroring `internal/detect`), so `init()` fires without blank imports;
+and every context reads the same, so contributors learn the move once. Keep the surface
+minimal — a registry is earned only when a second real implementation exists (per
+"keep it simple"); the contexts below already have ≥2, which is why they use it.
 
-A new *standard* (e.g. ruff vs black+flake8) is a branch inside that language's
-`lang_<name>.go` keyed on the config's per-language `standard`; a new cross-cutting
-standard (e.g. `changelog/gitcliff`) is one adapter implementing the relevant port. The
-`lang_<name>.go` files and this section are the only places that describe a language, so
-detection, quality, and docs stay in sync.
+| Registry (package)           | Key            | Plug-in file              | Resolver           |
+| ---------------------------- | -------------- | ------------------------- | ------------------ |
+| Detection (`detect`)         | language       | `lang_<name>.go`          | scan/registry      |
+| QualityGate (`quality`)      | language       | `lang_<name>.go`          | `AdapterFor`       |
+| Versioning (`version`)       | manifest type  | `manifest_<name>.go`      | `ManagerFor`       |
+| Changelog (`changelog`)      | standard       | `std_<name>.go`           | `WriterFor`        |
+| CommitConventions (`commit`) | convention     | `conv_<name>.go`          | `ValidatorFor`     |
+| Wiring/CI (`wiring`)         | CI provider    | `ci_<name>.go`            | `ProviderFor`      |
+
+Examples of the move:
+
+1. **Add a language** = two files, nothing else: `internal/detect/lang_<name>.go`
+   (`register(langSpec{…})` with markers → package manager, tools + install hints, skip
+   dirs) and `internal/quality/lang_<name>.go` (`register(name, ctor)` with a `[]stepSpec`
+   of kind + gating tool + exec). The shared `adapter`/`step` plumbing and
+   `passOrFail`/`output` helpers live in `quality/adapter.go`, so a language file is just
+   its stages.
+2. **Add a standard** (changelog format, commit convention, CI provider) = one file in
+   that context registering itself under its key; `bump`/`verify`/`init` resolve it from
+   config without a code change.
+
+A per-language *sub-choice* that doesn't warrant its own registry — e.g. ruff vs
+black+flake8 within Python — stays a branch inside that language's `lang_<name>.go`,
+keyed on the config's per-language `standard`. These `<plug-in>.go` files and this
+section are the only places a language/standard is described, so code and docs stay in
+sync.
 
 ## Implementation notes
 
@@ -155,9 +174,11 @@ detection, quality, and docs stay in sync.
   with fakes; makes new languages/standards additive.
 - **ADR-005 — `verify` is the shared contract.** Hook and CI both call it, so local and
   CI never drift.
-- **ADR-006 — Languages self-register in every context.** Both detection and quality keep
-  one `lang_<name>.go` per language in the context's own package, registering itself in
-  `init()`. Adding a language touches no engine and no central map; the trade-off is that
-  a context's adapters share its package (they shell out, so they stay tool-agnostic
-  anyway). Chosen over per-language packages, which would reintroduce a central
-  blank-import list and defeat self-registration.
+- **ADR-006 — Self-registration is the only extension pattern.** Every multi-implementation
+  choice (language, manifest, changelog/commit/CI standard) is a registry whose entries
+  live as `init()`-registering files in the context's own package and are resolved via a
+  `…For(key)` lookup — no central map, switch, or blank-import list. Adding one touches no
+  engine and no CLI wiring. Trade-off: a context's adapters share its package (they shell
+  out, so they stay tool-agnostic anyway). Chosen over per-implementation packages, which
+  would reintroduce a central import list and defeat self-registration. A registry is
+  added only once a second real implementation exists.
