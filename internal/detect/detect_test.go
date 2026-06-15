@@ -58,6 +58,41 @@ func TestDetect_LanguagesDirsAndPackageManagers(t *testing.T) {
 	}
 }
 
+// A single-root build tool (Java/Maven reactor, Gradle multi-project) collapses to its
+// outermost manifest: submodule poms are part of that one build, not separate units —
+// otherwise each submodule runs alone and can't resolve its siblings. Languages that are
+// not single-root (here Go) keep one unit per directory.
+func TestDetect_SingleRootCollapsesSubmodules(t *testing.T) {
+	fsys := fstest.MapFS{
+		"pom.xml":            {}, // reactor root
+		"core/pom.xml":       {}, // submodule
+		"wizard/pom.xml":     {}, // submodule
+		"tools/go/go.mod":    {}, // unrelated Go module
+		"tools/agent/go.mod": {}, // a second Go module: stays separate
+	}
+
+	res, err := Detect(fsys, allMissing)
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+
+	var javaDirs, goDirs []string
+	for _, l := range res.Languages {
+		switch l.Name {
+		case "java":
+			javaDirs = append(javaDirs, l.Dir)
+		case "go":
+			goDirs = append(goDirs, l.Dir)
+		}
+	}
+	if len(javaDirs) != 1 || javaDirs[0] != "." {
+		t.Errorf("java should collapse to the reactor root [.], got %v", javaDirs)
+	}
+	if len(goDirs) != 2 {
+		t.Errorf("non-single-root Go should keep both modules, got %v", goDirs)
+	}
+}
+
 // Tool resolution reflects what the lookup reports, and each tool is looked up once.
 func TestDetect_ToolInstalledStatus(t *testing.T) {
 	var calls int

@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Multi-module Maven/Gradle projects no longer run (and hang) once per submodule:
+  detection now collapses a single-root build tool's nested manifests to the outermost
+  reactor root, so `cairn verify` builds the whole project once where the build tool's
+  reactor can resolve inter-module dependencies — instead of building each submodule
+  alone (which stalls trying to fetch its siblings) and printing N identical lines.
+- Java `cairn verify` no longer hangs and actually verifies the project: the adapter now
+  runs the build tool's real lifecycle (`mvn -B verify` / `gradle --console=plain check`)
+  instead of a hardcoded `spotless:check`, which froze resolving a Spotless plugin most
+  projects never declare. It prefers the committed `mvnw`/`gradlew` wrapper and always
+  runs non-interactively, so a missing plugin or a prompt can't stall it.
+- `cairn verify` no longer leaves you staring at a silent terminal: each stage renders a
+  live spinner with elapsed seconds as it runs (TTY); the step label includes the unit's
+  directory when it isn't the repo root; and `--verbose` prints the exact command (with
+  its working directory) and streams the tool's own output — the visibility CI runs and
+  debugging need. As a safety net, a stalled stage is still bounded by `verify.timeout`
+  (default 5m) and fails as "timed out".
 - Tool lookup now checks GOPATH/bin and GOBIN in addition to PATH, resolving Go tools
   (like gofumpt) installed via `go install` but not in the shell's PATH.
 
@@ -27,6 +43,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   adding a language is adding a file, with no edits to the detection engine.
 
 ### Added
+- Java quality adapter (`internal/quality/lang_java.go`) delegating to the build tool's
+  verification lifecycle — `maven` (default) or `gradle` — via the committed wrapper when
+  present, gated on the JDK; self-registered into `cairn verify`.
 - JavaScript/TypeScript quality adapter (`internal/quality/lang_javascript.go`) supporting
   both `eslint` (prettier + eslint) and `biome` standards via `npx`, with tests run through
   `npm test`; every stage gates on `npx` and it self-registers into `cairn verify`.

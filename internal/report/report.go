@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 )
 
 // Status is how a single step ended. Glyphs follow AGENTS.md: ✓ ✗ ⊘ !.
@@ -66,29 +67,35 @@ type Step struct {
 	Detail string
 }
 
-// Reporter renders progress and a compact summary.
+// Reporter renders progress and a compact summary. Running announces a step that is
+// about to run and returns a function to call with its final result.
 type Reporter interface {
 	Start(title string)
+	Running(name string) func(s Step)
 	Step(s Step)
 	Summary(steps []Step)
 	Error(err error)
 }
 
 // Options control rendering. Color toggles ANSI; Quiet suppresses per-step lines
-// (the summary and errors still print); Verbose always shows Detail.
+// (the summary and errors still print); Verbose always shows Detail; TTY enables the
+// live elapsed-time indicator (off when output is piped, quiet, or verbose).
 type Options struct {
 	Color   bool
 	Quiet   bool
 	Verbose bool
+	TTY     bool
 }
 
 // Detect derives Options from the writer and environment: color only on a TTY with
 // NO_COLOR unset. Quiet and Verbose come from CLI flags.
 func Detect(w io.Writer, quiet, verbose bool) Options {
+	tty := isTerminal(w)
 	return Options{
-		Color:   isTerminal(w) && os.Getenv("NO_COLOR") == "",
+		Color:   tty && os.Getenv("NO_COLOR") == "",
 		Quiet:   quiet,
 		Verbose: verbose,
+		TTY:     tty,
 	}
 }
 
@@ -126,6 +133,45 @@ func (r *reporter) Start(title string) {
 		return
 	}
 	fmt.Fprintln(r.w, title)
+}
+
+// Running announces that step `name` has begun and returns a done(Step) to call with its
+// outcome. On an interactive TTY it animates a spinner with elapsed seconds in place
+// ("⠙ name… 12s") so a long-running tool never looks frozen; done clears it and prints
+// the final result line. When piped, quiet, or verbose, it falls back to printing the
+// result line on done (verbose already streams the tool's own output).
+func (r *reporter) Running(name string) func(Step) {
+	if r.opt.Quiet {
+		return func(Step) {}
+	}
+	if !r.opt.TTY || r.opt.Verbose {
+		return r.Step
+	}
+
+	stop, finished := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(finished)
+		frames := []rune("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
+		tick := time.NewTicker(120 * time.Millisecond)
+		defer tick.Stop()
+		start := time.Now()
+		for i := 0; ; i++ {
+			select {
+			case <-stop:
+				return
+			case <-tick.C:
+				fmt.Fprintf(r.w, "\r\033[2K  %s %s… %ds",
+					r.paint(colorDim, string(frames[i%len(frames)])), name, int(time.Since(start).Seconds()))
+			}
+		}
+	}()
+
+	return func(s Step) {
+		close(stop)
+		<-finished
+		fmt.Fprint(r.w, "\r\033[2K") // clear the spinner line before the result
+		r.Step(s)
+	}
 }
 
 func (r *reporter) Step(s Step) {

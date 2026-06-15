@@ -12,6 +12,7 @@ import (
 	"io/fs"
 	"path"
 	"sort"
+	"strings"
 )
 
 // LookupFunc resolves an executable name to a path, matching exec.LookPath. A
@@ -87,9 +88,25 @@ func Detect(fsys fs.FS, look LookupFunc) (*Result, error) {
 		specByName[s.name] = s
 	}
 
+	// nestedUnit reports whether dir sits under another detected unit of the same
+	// language — i.e. a submodule of that unit's build root.
+	nestedUnit := func(name, dir string) bool {
+		for kk := range pmByUnit {
+			if kk.name == name && kk.dir != dir && isUnder(dir, kk.dir) {
+				return true
+			}
+		}
+		return false
+	}
+
 	langs := make([]Language, 0, len(pmByUnit))
 	for k, pm := range pmByUnit {
 		spec := specByName[k.name]
+		// For single-root build tools, a nested manifest is a submodule of an ancestor
+		// unit's reactor, not its own unit — skip it so the build runs once at the root.
+		if spec.singleRoot && nestedUnit(k.name, k.dir) {
+			continue
+		}
 		tools := make([]ToolStatus, 0, len(spec.tools))
 		for _, t := range spec.tools {
 			tools = append(tools, ToolStatus{Tool: t, Installed: lookCached(t.Name)})
@@ -108,4 +125,16 @@ func Detect(fsys fs.FS, look LookupFunc) (*Result, error) {
 		return langs[i].Dir < langs[j].Dir
 	})
 	return &Result{Languages: langs}, nil
+}
+
+// isUnder reports whether child is nested inside parent (not equal). The repo root "."
+// is an ancestor of every other dir.
+func isUnder(child, parent string) bool {
+	if child == parent {
+		return false
+	}
+	if parent == "." {
+		return true
+	}
+	return strings.HasPrefix(child, parent+"/")
 }

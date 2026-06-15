@@ -51,7 +51,7 @@ func TestRunOrdersStagesAndOmitsUnprovided(t *testing.T) {
 		&fakeStep{kind: Format, tool: "fmt", res: StepResult{Status: StatusPass}},
 	}}
 	got := Run(context.Background(), enabledVerify(), adapter,
-		LangUnit{Name: "go", Dir: "."}, allInstalled("go", "fmt"))
+		LangUnit{Name: "go", Dir: "."}, allInstalled("go", "fmt"), nil)
 
 	if len(got) != 2 {
 		t.Fatalf("want 2 results, got %d: %+v", len(got), got)
@@ -68,7 +68,7 @@ func TestRunSkipsDisabledStage(t *testing.T) {
 	v.Lint.Enabled = false
 
 	got := Run(context.Background(), v, fakeAdapter{steps: []Step{lint}},
-		LangUnit{Name: "go"}, allInstalled("linter"))
+		LangUnit{Name: "go"}, allInstalled("linter"), nil)
 
 	if len(got) != 0 {
 		t.Errorf("disabled stage produced results: %+v", got)
@@ -90,7 +90,7 @@ func TestRunMissingToolDegradesByRequired(t *testing.T) {
 		LangUnit{Name: "go"}, map[string]ToolInfo{
 			"fmt":    {Installed: false, Hint: "go install fmt"},
 			"linter": {Installed: false},
-		})
+		}, nil)
 
 	if len(got) != 2 {
 		t.Fatalf("want 2 results, got %+v", got)
@@ -113,10 +113,75 @@ func TestRunPassesFixModeToFormatter(t *testing.T) {
 	v.Format.Mode = "fix"
 
 	Run(context.Background(), v, fakeAdapter{steps: []Step{fmtStep}},
-		LangUnit{Name: "go"}, allInstalled("fmt"))
+		LangUnit{Name: "go"}, allInstalled("fmt"), nil)
 
 	if fmtStep.gotMode != ModeFix {
 		t.Errorf("formatter mode: want ModeFix, got %v", fmtStep.gotMode)
+	}
+}
+
+// ctxStep blocks until its context is cancelled, recording whether it was handed a
+// deadline — standing in for a tool that would otherwise hang verify forever.
+type ctxStep struct {
+	kind     Kind
+	tool     string
+	deadline bool
+}
+
+func (s *ctxStep) Kind() Kind   { return s.kind }
+func (s *ctxStep) Tool() string { return s.tool }
+func (s *ctxStep) Run(ctx context.Context, _ LangUnit, _ Mode) StepResult {
+	_, s.deadline = ctx.Deadline()
+	<-ctx.Done() // released only when the configured timeout fires
+	return StepResult{Status: StatusFail, Detail: "timed out"}
+}
+
+// A stage that would block forever is bounded by verify.timeout: its context gets a
+// deadline and Run returns a failure instead of freezing.
+func TestRunBoundsStageWithTimeout(t *testing.T) {
+	step := &ctxStep{kind: Test, tool: "go"}
+	v := enabledVerify()
+	v.Timeout = "10ms"
+
+	got := Run(context.Background(), v, fakeAdapter{steps: []Step{step}},
+		LangUnit{Name: "go"}, allInstalled("go"), nil)
+
+	if len(got) != 1 || got[0].Status != StatusFail {
+		t.Fatalf("timed-out stage should fail: %+v", got)
+	}
+	if !step.deadline {
+		t.Error("step was not handed a deadline-bounded context")
+	}
+}
+
+// recordObserver captures the progress callbacks Run makes.
+type recordObserver struct {
+	began int
+	ended []Status
+}
+
+func (o *recordObserver) Begin(LangUnit, Kind) { o.began++ }
+func (o *recordObserver) End(r Result)         { o.ended = append(o.ended, r.Status) }
+
+// Run announces every executed stage to the Observer (Begin then End) so a caller can
+// show live progress; a missing-tool stage is reported via End only (it never runs).
+func TestRunReportsProgressToObserver(t *testing.T) {
+	steps := []Step{
+		&fakeStep{kind: Format, tool: "fmt", res: StepResult{Status: StatusPass}},
+		&fakeStep{kind: Test, tool: "tester"}, // tool missing below ⇒ End only
+	}
+	obs := &recordObserver{}
+	v := enabledVerify()
+	v.Test.Required = false
+
+	Run(context.Background(), v, fakeAdapter{steps: steps}, LangUnit{Name: "go"},
+		map[string]ToolInfo{"fmt": {Installed: true}, "tester": {Installed: false}}, obs)
+
+	if obs.began != 1 {
+		t.Errorf("Begin should fire once (only the runnable stage), got %d", obs.began)
+	}
+	if len(obs.ended) != 2 || obs.ended[0] != StatusPass || obs.ended[1] != StatusWarn {
+		t.Errorf("End should report both stages [pass, warn], got %v", obs.ended)
 	}
 }
 

@@ -3,6 +3,8 @@ package cli
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,9 +22,12 @@ import (
 // what failed, so the message itself stays silent (root sets SilenceErrors).
 var errVerifyFailed = errors.New("verify failed")
 
-// smartExec wraps runner.Exec to resolve tool paths using custom lookup first.
+// smartExec wraps runner.Exec to resolve tool paths using custom lookup first, and (for
+// --verbose) announces and tees each tool's live output so you can see exactly what runs.
 type smartExec struct {
 	lookupTool func(string) (string, error)
+	stream     io.Writer
+	announce   func(runner.Command) // called with the resolved command before it runs
 }
 
 func (s smartExec) Run(ctx context.Context, cmd runner.Command) (runner.Result, error) {
@@ -30,8 +35,47 @@ func (s smartExec) Run(ctx context.Context, cmd runner.Command) (runner.Result, 
 	if resolved, err := s.lookupTool(cmd.Name); err == nil {
 		cmd.Name = resolved
 	}
+	if s.stream != nil {
+		cmd.Stream = s.stream
+	}
+	if s.announce != nil {
+		s.announce(cmd)
+	}
 	// Fall back to standard Exec
 	return runner.Exec{}.Run(ctx, cmd)
+}
+
+// liveObserver renders each stage as it runs — a spinner with elapsed time on a TTY, so
+// a long tool never looks frozen — and collects the step lines for the final summary.
+type liveObserver struct {
+	rep   report.Reporter
+	done  func(report.Step)
+	steps []report.Step
+}
+
+// stepName labels a stage; it appends the unit's directory when it isn't the repo root,
+// so same-language units in different parts of the repo are distinguishable.
+func stepName(lang, dir string, k quality.Kind) string {
+	name := lang + " · " + k.String()
+	if dir != "" && dir != "." {
+		name += " (" + dir + ")"
+	}
+	return name
+}
+
+func (o *liveObserver) Begin(unit quality.LangUnit, k quality.Kind) {
+	o.done = o.rep.Running(stepName(unit.Name, unit.Dir, k))
+}
+
+func (o *liveObserver) End(r quality.Result) {
+	s := report.Step{Name: stepName(r.Lang, r.Dir, r.Kind), Status: toStatus(r.Status), Detail: r.Detail}
+	if o.done != nil {
+		o.done(s) // resolve the running indicator started in Begin
+		o.done = nil
+	} else {
+		o.rep.Step(s) // a missing-tool result has no running phase
+	}
+	o.steps = append(o.steps, s)
 }
 
 // lookupTool extends exec.LookPath to also check GOPATH/bin and GOBIN, where Go tools
@@ -105,6 +149,19 @@ func newVerifyCmd() *cobra.Command {
 			rep.Start("cairn verify")
 
 			run := smartExec{lookupTool: lookupTool}
+			if verbose {
+				// Under --verbose, print the exact command (with its directory) and stream
+				// the tool's live output — the visibility CI runs and debugging need.
+				run.stream = out
+				run.announce = func(c runner.Command) {
+					dir := c.Dir
+					if dir == "" {
+						dir = "."
+					}
+					fmt.Fprintf(out, "  $ cd %s && %s %s\n", dir, c.Name, strings.Join(c.Args, " "))
+				}
+			}
+			obs := &liveObserver{rep: rep}
 			var all []quality.Result
 			for _, lang := range res.Languages {
 				standard := ""
@@ -119,17 +176,11 @@ func newVerifyCmd() *cobra.Command {
 					continue // explicitly disabled in cairn.yaml
 				}
 				results := quality.Run(context.Background(), cfg.Verify, adapter,
-					quality.LangUnit{Name: lang.Name, Dir: lang.Dir}, toolInfo(lang))
+					quality.LangUnit{Name: lang.Name, Dir: lang.Dir}, toolInfo(lang), obs)
 				all = append(all, results...)
 			}
 
-			steps := make([]report.Step, 0, len(all))
-			for _, r := range all {
-				s := report.Step{Name: r.Lang + " · " + r.Kind.String(), Status: toStatus(r.Status), Detail: r.Detail}
-				rep.Step(s)
-				steps = append(steps, s)
-			}
-			rep.Summary(steps)
+			rep.Summary(obs.steps)
 
 			if quality.Failed(all) {
 				return errVerifyFailed

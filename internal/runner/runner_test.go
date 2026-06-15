@@ -1,10 +1,30 @@
 package runner
 
 import (
+	"bytes"
 	"context"
+	"strings"
 	"testing"
 	"time"
 )
+
+// A Stream receives the command's output live while Result still captures it, so a long
+// command can show progress without losing the captured text used for the summary detail.
+func TestExecTeesStreamWhileCapturing(t *testing.T) {
+	var live bytes.Buffer
+	res, err := Exec{}.Run(context.Background(), Command{
+		Name: "sh", Args: []string{"-c", "printf hello"}, Stream: &live,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(live.String(), "hello") {
+		t.Errorf("stream did not receive live output: %q", live.String())
+	}
+	if res.Stdout != "hello" {
+		t.Errorf("output still captured: got %q", res.Stdout)
+	}
+}
 
 func TestExecCapturesOutputAndExitZero(t *testing.T) {
 	res, err := Exec{}.Run(context.Background(), Command{

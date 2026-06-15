@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os/exec"
 	"time"
 )
@@ -19,6 +20,7 @@ type Command struct {
 	Dir     string
 	Env     []string // nil inherits the parent environment
 	Timeout time.Duration
+	Stream  io.Writer // if set, stdout+stderr are also written here live (still captured)
 }
 
 // Result captures everything a caller needs to report on a run. A non-zero ExitCode
@@ -54,6 +56,12 @@ func (Exec) Run(ctx context.Context, cmd Command) (Result, error) {
 	var stdout, stderr bytes.Buffer
 	c.Stdout = &stdout
 	c.Stderr = &stderr
+	if cmd.Stream != nil {
+		// Tee live output to the stream so a long command shows progress, while still
+		// capturing it for the result Detail.
+		c.Stdout = io.MultiWriter(&stdout, cmd.Stream)
+		c.Stderr = io.MultiWriter(&stderr, cmd.Stream)
+	}
 
 	err := c.Run()
 	res := Result{Stdout: stdout.String(), Stderr: stderr.String()}

@@ -81,9 +81,11 @@ adapters to one self-registering file per language in the `quality` package — 
 **Steps:** `internal/quality/lang_javascript.go` honoring `standard` (eslint/prettier; biome) via npx.
 **Acceptance:** Green + failing fixtures pass/fail; standard switch picks the right tools.
 
-### [ ] 5d — Java adapter
-**Read:** AGENTS.md · docs/ARCHITECTURE.md (tool matrix) · internal/quality/lang_rust.go (template)
-**Steps:** `internal/quality/lang_java.go` wrapping the build tool (maven/gradle) for format/test.
+### [x] 5d — Java adapter
+**Read:** AGENTS.md · docs/ARCHITECTURE.md (tool matrix) · internal/quality/lang_rust.go (template) · internal/quality/lang_python.go (standard branching) · internal/detect/lang_java.go
+**Steps:** `internal/quality/lang_java.go` delegating to the build tool's verification
+lifecycle (`mvn -B verify` / `gradle check`), wrapper-aware (`mvnw`/`gradlew`) and
+non-interactive — no fabricated plugin goals (an early `spotless:check` hung). Gated on the JDK.
 **Acceptance:** Green + failing fixtures pass/fail.
 
 ### [ ] 5e — Dart adapter

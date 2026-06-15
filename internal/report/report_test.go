@@ -53,6 +53,21 @@ func TestDetailShownOnFailHiddenForPass(t *testing.T) {
 	}
 }
 
+// Without a TTY, Running animates nothing — done(s) just prints the final result line,
+// keeping piped/CI output free of cursor-control escapes.
+func TestRunningFallsBackToResultLineWhenNotTTY(t *testing.T) {
+	var buf bytes.Buffer
+	r := New(&buf, Options{}) // TTY false
+	r.Running("go · test")(Step{Name: "go · test", Status: Pass})
+	out := buf.String()
+	if !strings.Contains(out, "✓ go · test") {
+		t.Errorf("done should print the result line: %q", out)
+	}
+	if strings.Contains(out, "\033") || strings.Contains(out, "\r") {
+		t.Errorf("non-TTY Running must not emit cursor controls: %q", out)
+	}
+}
+
 func TestQuietSuppressesStepsButKeepsSummary(t *testing.T) {
 	var buf bytes.Buffer
 	r := New(&buf, Options{Quiet: true})

@@ -8,6 +8,7 @@ package quality
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/IVIR3zaM/Cairn/internal/config"
 )
@@ -91,21 +92,38 @@ type ToolInfo struct {
 	Hint      string
 }
 
-// Result is one line of the verify outcome.
+// Result is one line of the verify outcome. Dir is the unit's directory, so callers can
+// distinguish same-language units in different parts of the repo.
 type Result struct {
 	Kind   Kind
 	Lang   string
+	Dir    string
 	Status Status
 	Detail string
 }
 
+// Observer is notified as each stage begins and ends so the caller can render live
+// progress (a long tool never looks frozen). A nil Observer disables progress.
+type Observer interface {
+	Begin(unit LangUnit, k Kind) // a stage is about to run
+	End(r Result)                // a stage produced a result
+}
+
 // Run builds the ordered plan for unit and executes it. A stage disabled in config,
 // or one the adapter does not provide, is omitted. A missing tool fails the stage when
-// required, otherwise warns and skips it (with an install hint).
-func Run(ctx context.Context, v config.Verify, a Adapter, unit LangUnit, tools map[string]ToolInfo) []Result {
+// required, otherwise warns and skips it (with an install hint). Each executed stage is
+// announced to obs before it runs and reported after, so callers can show progress.
+func Run(ctx context.Context, v config.Verify, a Adapter, unit LangUnit, tools map[string]ToolInfo, obs Observer) []Result {
 	byKind := make(map[Kind]Step, len(a.Steps()))
 	for _, s := range a.Steps() {
 		byKind[s.Kind()] = s
+	}
+
+	emit := func(r Result) Result {
+		if obs != nil {
+			obs.End(r)
+		}
+		return r
 	}
 
 	var results []Result
@@ -119,21 +137,36 @@ func Run(ctx context.Context, v config.Verify, a Adapter, unit LangUnit, tools m
 			continue
 		}
 		if info := tools[step.Tool()]; !info.Installed {
-			results = append(results, missing(k, unit.Name, step.Tool(), info.Hint, sc.Required))
+			results = append(results, emit(missing(k, unit, step.Tool(), info.Hint, sc.Required)))
 			continue
+		}
+		if obs != nil {
+			obs.Begin(unit, k)
 		}
 		mode := ModeCheck
 		if k == Format && sc.Mode == "fix" {
 			mode = ModeFix
 		}
-		r := step.Run(ctx, unit, mode)
-		results = append(results, Result{Kind: k, Lang: unit.Name, Status: r.Status, Detail: r.Detail})
+		r := runWithTimeout(ctx, v.StepTimeout(), step, unit, mode)
+		results = append(results, emit(Result{Kind: k, Lang: unit.Name, Dir: unit.Dir, Status: r.Status, Detail: r.Detail}))
 	}
 	return results
 }
 
+// runWithTimeout bounds a single stage with timeout when set, so a hung tool (e.g. a
+// build downloading dependencies) is cancelled and reported instead of freezing verify.
+// The runner.Exec adapter turns the cancelled context into a "timed out" failure.
+func runWithTimeout(ctx context.Context, timeout time.Duration, step Step, unit LangUnit, mode Mode) StepResult {
+	if timeout <= 0 {
+		return step.Run(ctx, unit, mode)
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	return step.Run(ctx, unit, mode)
+}
+
 // missing renders the result for a stage whose tool is not installed.
-func missing(k Kind, lang, tool, hint string, required bool) Result {
+func missing(k Kind, unit LangUnit, tool, hint string, required bool) Result {
 	detail := fmt.Sprintf("%s not installed", tool)
 	if hint != "" {
 		detail += " — install: " + hint
@@ -142,7 +175,7 @@ func missing(k Kind, lang, tool, hint string, required bool) Result {
 	if required {
 		status = StatusFail
 	}
-	return Result{Kind: k, Lang: lang, Status: status, Detail: detail}
+	return Result{Kind: k, Lang: unit.Name, Dir: unit.Dir, Status: status, Detail: detail}
 }
 
 func stageConfig(v config.Verify, k Kind) config.Step {

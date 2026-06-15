@@ -10,6 +10,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -48,13 +49,25 @@ type Step struct {
 	Mode     string `yaml:"mode,omitempty"`
 }
 
-// Verify holds the global stage toggles.
+// Verify holds the global stage toggles and the per-stage timeout.
 type Verify struct {
-	Format    Step `yaml:"format"`
-	Lint      Step `yaml:"lint"`
-	Typecheck Step `yaml:"typecheck"`
-	Test      Step `yaml:"test"`
-	Build     Step `yaml:"build"`
+	Format    Step   `yaml:"format"`
+	Lint      Step   `yaml:"lint"`
+	Typecheck Step   `yaml:"typecheck"`
+	Test      Step   `yaml:"test"`
+	Build     Step   `yaml:"build"`
+	Timeout   string `yaml:"timeout,omitempty"`
+}
+
+// StepTimeout is the per-stage deadline parsed from Timeout; zero (the empty or
+// unparseable case) means no deadline. It bounds each tool invocation so a hung
+// command — e.g. a build downloading dependencies — fails instead of freezing verify.
+func (v Verify) StepTimeout() time.Duration {
+	d, err := time.ParseDuration(v.Timeout)
+	if err != nil {
+		return 0
+	}
+	return d
 }
 
 // Commits configures convention validation.
@@ -115,6 +128,7 @@ func Default() *Config {
 			Typecheck: Step{Enabled: true, Required: false},
 			Test:      Step{Enabled: true, Required: true},
 			Build:     Step{Enabled: false},
+			Timeout:   "5m",
 		},
 		Commits:   Commits{Convention: "conventional", ValidateHook: true},
 		Changelog: Changelog{Standard: "keepachangelog", File: "CHANGELOG.md"},
@@ -184,6 +198,11 @@ func (c *Config) Validate() error {
 	}{{"format", c.Verify.Format.Mode}, {"test", c.Verify.Test.Mode}} {
 		if s.mode != "" && !oneOf(s.mode, "check", "fix") {
 			add("verify.%s.mode: %q is not one of [check fix]", s.name, s.mode)
+		}
+	}
+	if c.Verify.Timeout != "" {
+		if _, err := time.ParseDuration(c.Verify.Timeout); err != nil {
+			add("verify.timeout: %q is not a valid duration (e.g. \"90s\", \"5m\")", c.Verify.Timeout)
 		}
 	}
 	for _, name := range sortedKeys(c.Languages) {

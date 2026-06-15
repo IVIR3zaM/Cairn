@@ -28,6 +28,11 @@ type langSpec struct {
 	markers  []marker
 	tools    []Tool
 	skipDirs []string // generated dirs (deps/build output) to ignore while scanning
+	// singleRoot marks languages whose build tool owns the whole tree from one root
+	// manifest (e.g. a Maven reactor / Gradle multi-project): nested manifests are
+	// submodules of that build, not independent units, so detection collapses them to
+	// the outermost dir and the tool's own reactor builds the rest.
+	singleRoot bool
 }
 
 // registry is built at init time from each language's register() call; it is the

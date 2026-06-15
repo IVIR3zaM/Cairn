@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // write a cairn.yaml in a temp dir and return its path.
@@ -96,6 +97,27 @@ project:
 		if !contains(msg, want) {
 			t.Errorf("error %q missing %q", msg, want)
 		}
+	}
+}
+
+// verify.timeout must parse as a Go duration; a bad value is an actionable error, and a
+// good one (or the default) is exposed as a time.Duration the gate can bound stages with.
+func TestVerifyTimeout(t *testing.T) {
+	bad := writeConfig(t, "version: \"1\"\nverify:\n  timeout: 5minutes\n")
+	if _, err := Load(bad); err == nil || !contains(err.Error(), "verify.timeout") {
+		t.Fatalf("bad timeout: want actionable error, got %v", err)
+	}
+
+	good := writeConfig(t, "version: \"1\"\nverify:\n  timeout: 90s\n")
+	cfg, err := Load(good)
+	if err != nil {
+		t.Fatalf("good timeout: %v", err)
+	}
+	if cfg.Verify.StepTimeout() != 90*time.Second {
+		t.Errorf("StepTimeout = %v, want 90s", cfg.Verify.StepTimeout())
+	}
+	if Default().Verify.StepTimeout() != 5*time.Minute {
+		t.Errorf("default StepTimeout = %v, want 5m", Default().Verify.StepTimeout())
 	}
 }
 
