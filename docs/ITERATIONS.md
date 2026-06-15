@@ -46,7 +46,7 @@ a TTY impl (color, glyphs ✓✗⊘!, spinner, compact summary) and a plain CI i
 **Acceptance:** Reporter renders a stable, compact summary in tests; plain mode has no
 ANSI; ToolRunner captures exit/output correctly.
 
-## [ ] 4 — QualityGate + Go adapter (`verify` end-to-end)
+## [x] 4 — QualityGate + Go adapter (`verify` end-to-end)
 **Goal:** `cairn verify` works fully for one language (Go), proving the whole spine.
 **Read:** AGENTS.md · docs/ARCHITECTURE.md (QualityGate) · internal/{config,detect,runner,report}
 **Steps:** Step ports (Formatter/Linter/Tester/…); a `quality/go` adapter wrapping

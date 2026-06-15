@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   adding a language is adding a file, with no edits to the detection engine.
 
 ### Added
+- QualityGate (`internal/quality`) and a Go adapter (`internal/quality/go`): `cairn
+  verify` builds an ordered per-language plan (format → lint → typecheck → test →
+  build), runs each stage's tool through the `ToolRunner`, and renders a compact
+  summary (exit non-zero on failure). Disabled stages are omitted; a missing tool
+  fails a `required` stage or warns-and-skips an optional one with an install hint.
+  The Go adapter wraps gofumpt, golangci-lint, and `go test`.
 - Cross-cutting ports: `ToolRunner` (`internal/runner`) with an `Exec` adapter that
   captures stdout/stderr/exit-code and honors cwd + timeout, plus a `Fake` for tests;
   and the `Reporter` UX port (`internal/report`) rendering glyph steps and a compact

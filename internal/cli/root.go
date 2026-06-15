@@ -19,6 +19,7 @@ func newRootCmd() *cobra.Command {
 		Version:       version,
 	}
 	root.AddCommand(newDoctorCmd())
+	root.AddCommand(newVerifyCmd())
 	return root
 }
 
