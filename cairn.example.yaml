@@ -1,0 +1,62 @@
+# cairn.yaml — example configuration (annotated).
+# `cairn init` generates one of these for you by detecting your repo. This file documents
+# every option; a real cairn.yaml only needs the parts that differ from the defaults.
+
+version: "1"
+
+project:
+  canonical_version: "0.1.0"   # the source of truth for version-sync
+  versioning: semver           # semver | calver
+
+# Auto-detected; edit to add/remove or to pin a per-language "standard".
+languages:
+  go:
+    dir: "."
+    enabled: true
+  python:
+    dir: "py"
+    enabled: true
+    standard: ruff             # ruff | black+flake8
+  # java | ts | rust | dart blocks look the same (dir, enabled, optional standard)
+
+# The unified gate. Each step: enabled + required (hard-fail vs warn+skip when the tool
+# is missing). `mode: check` means non-mutating (used in hooks/CI).
+verify:
+  format:    { enabled: true,  required: true,  mode: check }
+  lint:      { enabled: true,  required: true }
+  typecheck: { enabled: true,  required: false }
+  test:      { enabled: true,  required: true }
+  build:     { enabled: false }
+
+commits:
+  convention: conventional     # conventional | gitmoji | none
+  signoff: false               # require DCO Signed-off-by
+  validate_hook: true          # install a commit-msg hook that enforces the convention
+
+changelog:
+  standard: keepachangelog     # keepachangelog | git-cliff | conventional-changelog
+  file: CHANGELOG.md
+
+# Cairn's signature check: these doc snippets must advertise canonical_version.
+# {VERSION} is the placeholder. `cairn verify` fails if they drift; `cairn bump` rewrites them.
+version_sync:
+  files:
+    - path: README.md
+      patterns:
+        - "mylib:{VERSION}"
+        - "version-{VERSION}"
+
+hooks:
+  pre_commit: [verify]
+  commit_msg: [commit-lint]
+  pre_push: []
+
+ci:
+  provider: github             # github (others later)
+  jobs: [verify]
+
+# Optional cross-cutting standards — all off unless you opt in.
+addons:
+  editorconfig: false
+  license_header: false
+  branch_name: false

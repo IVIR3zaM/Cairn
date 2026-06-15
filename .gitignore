@@ -1,0 +1,15 @@
+# Go
+/bin/
+/dist/
+*.test
+*.out
+coverage.*
+
+# Editors / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Cairn local
+/cairn
