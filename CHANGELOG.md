@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Tool lookup now checks GOPATH/bin and GOBIN in addition to PATH, resolving Go tools
+  (like gofumpt) installed via `go install` but not in the shell's PATH.
+
 ### Changed
 - Quality adapters now accept a per-language `standard` parameter (e.g. "ruff" or
   "black+flake8" for Python) to select between multiple tool choices; the registry
@@ -23,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   adding a language is adding a file, with no edits to the detection engine.
 
 ### Added
+- Python quality adapter (`internal/quality/lang_python.go`) supporting both ruff (modern
+  single-tool) and black+flake8 (traditional pair) standards via per-language config;
+  self-registered into `cairn verify`.
 - Rust quality adapter (`internal/quality/lang_rust.go`) wrapping `cargo fmt`, `cargo
   clippy` (warnings as errors), and `cargo test`; self-registered into `cairn verify`.
 - QualityGate (`internal/quality`) and a Go adapter (`internal/quality/go`): `cairn
