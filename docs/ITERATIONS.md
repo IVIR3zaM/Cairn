@@ -19,7 +19,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done.
 running `go build` + `go test ./...` + `golangci-lint`.
 **Acceptance:** `go build ./...` and `go test ./...` pass; `cairn --version` prints.
 
-## [ ] 1 — Config domain
+## [x] 1 — Config domain
 **Goal:** Load, validate, and default-merge `cairn.yaml` into a typed aggregate.
 **Read:** AGENTS.md · docs/ARCHITECTURE.md (Config + schema sections)
 **Steps:** Define config structs matching the schema; YAML load; validation with clear

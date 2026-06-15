@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Config domain (`internal/config`): typed `cairn.yaml` aggregate with in-code
+  defaults, default-merge load, normalization, validation, and `LoadOrDefault`.
 - Buildable Go CLI skeleton (cobra): `cairn --version` and a `doctor` stub, plus
   `tool/verify.sh` and a GitHub Actions CI running build/test/lint.
 - Project scaffold: vision README, DDD/hexagonal `docs/ARCHITECTURE.md`, contributor
