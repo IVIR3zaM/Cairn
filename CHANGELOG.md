@@ -8,14 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Quality adapters are now self-registering, one file per language
+  (`internal/quality/lang_<name>.go`) inside the `quality` package, mirroring detection.
+  Each calls `register(name, ctor)` in `init()` and `cairn verify` resolves them via
+  `quality.AdapterFor` — adding a language no longer edits the CLI's `adapters` map (now
+  removed). Shared step plumbing and exit-code helpers moved to `adapter.go` (ADR-006).
 - Detection languages are now pluggable, one self-registering file per language
   (`internal/detect/lang_<name>.go`) instead of a hardcoded central list. Each file
   owns its markers, tools, and skip dirs and calls `register(...)` from `init()`;
   adding a language is adding a file, with no edits to the detection engine.
 
 ### Added
-- Rust quality adapter (`internal/quality/rust`) wrapping `cargo fmt`, `cargo clippy`
-  (warnings as errors), and `cargo test`, wired into `cairn verify`.
+- Rust quality adapter (`internal/quality/lang_rust.go`) wrapping `cargo fmt`, `cargo
+  clippy` (warnings as errors), and `cargo test`; self-registered into `cairn verify`.
 - QualityGate (`internal/quality`) and a Go adapter (`internal/quality/go`): `cairn
   verify` builds an ordered per-language plan (format → lint → typecheck → test →
   build), runs each stage's tool through the `ToolRunner`, and renders a compact

@@ -43,9 +43,10 @@ a concrete tool.
   (feat/fix/breaking) for bump inference.
 - `Reporter` — the UX port (start/step/summary/error); has a TTY and a plain impl.
 
-Adapters are named `<context>/<lang>` or `<context>/<tool>`, e.g.
-`quality/python_ruff`, `version/cargo`, `changelog/keepachangelog`. Each is thin and
-individually testable with a fake `ToolRunner`.
+Adapters are thin and individually testable with a fake `ToolRunner`. Quality adapters
+are self-registering files inside the `quality` package (`internal/quality/lang_<name>.go`,
+see the extension-point section below); other contexts name their adapters
+`<context>/<tool>`, e.g. `version/cargo`, `changelog/keepachangelog`.
 
 ## The config aggregate — `cairn.yaml`
 
@@ -110,21 +111,31 @@ cairn.yaml → Wiring installs hook + generates CI → Reporter prints next step
 
 ## Adding a language or standard (extension point)
 
-Languages are **pluggable, one file per language** — nothing about a language is
-hardcoded in the detection engine. To add a language:
+Languages are **pluggable, one self-registering file per context** — nothing about a
+language is hardcoded in an engine or a central list. Both the detection and quality
+contexts use the same `init()`-registers-itself pattern, so adding a language is dropping
+two sibling files and editing nothing else (no engine, no CLI `adapters` map):
 
-1. **Detection:** drop a new `internal/detect/lang_<name>.go` whose `init()` calls
+1. **Detection:** drop `internal/detect/lang_<name>.go` whose `init()` calls
    `register(langSpec{…})` with the language's marker files (→ package manager), its
    standard tools (+ install hints), and any generated dirs to skip (e.g. `target`,
-   `node_modules`). That single file is the whole source of truth for detecting the
-   language; `register` self-assembles the registry and the scan's skip-dir set, and
-   panics on a duplicate name. No edits to `detect.go` or any central list.
-2. **Quality:** add one adapter file per port it needs (usually format/lint/test) under
-   `internal/quality/<name>` wrapping its in-market tools. No core changes.
+   `node_modules`). `register` self-assembles the detection registry and the scan's
+   skip-dir set, and panics on a duplicate name.
+2. **Quality:** drop `internal/quality/lang_<name>.go` whose `init()` calls
+   `register(name, ctor)` with a `[]stepSpec` (kind + gating tool + exec) wrapping the
+   language's in-market tools. The shared `adapter`/`step` plumbing and the
+   `passOrFail`/`output` helpers live in `adapter.go`, so a language file is just its
+   stages. `cairn verify` resolves the adapter through `quality.AdapterFor(name, run)` —
+   there is no per-language package and no central registration table.
 
-A new *standard* = one adapter implementing the relevant port (e.g. a
-`changelog/gitcliff`). The `lang_<name>.go` files and this section are the only places
-that describe a language, so detection and docs stay in sync.
+Both registries live in the same package as their engine (mirroring `internal/detect`),
+which is why `init()` self-registration works without blank imports.
+
+A new *standard* (e.g. ruff vs black+flake8) is a branch inside that language's
+`lang_<name>.go` keyed on the config's per-language `standard`; a new cross-cutting
+standard (e.g. `changelog/gitcliff`) is one adapter implementing the relevant port. The
+`lang_<name>.go` files and this section are the only places that describe a language, so
+detection, quality, and docs stay in sync.
 
 ## Implementation notes
 
@@ -144,3 +155,9 @@ that describe a language, so detection and docs stay in sync.
   with fakes; makes new languages/standards additive.
 - **ADR-005 — `verify` is the shared contract.** Hook and CI both call it, so local and
   CI never drift.
+- **ADR-006 — Languages self-register in every context.** Both detection and quality keep
+  one `lang_<name>.go` per language in the context's own package, registering itself in
+  `init()`. Adding a language touches no engine and no central map; the trade-off is that
+  a context's adapters share its package (they shell out, so they stay tool-agnostic
+  anyway). Chosen over per-language packages, which would reintroduce a central
+  blank-import list and defeat self-registration.

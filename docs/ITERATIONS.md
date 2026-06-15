@@ -56,37 +56,39 @@ with hint; wire `cairn verify`.
 with a compact failing summary; missing tool degrades per `required`.
 
 ## 5 — Remaining language adapters (split)
-**Goal:** `verify` supports Rust, Python, TS/JS, Java, Dart — one thin adapter each,
-mirroring `internal/quality/go`, wired into `internal/cli/verify.go`'s `adapters` map.
-Respect per-language `standard` choice where it exists (ruff vs black+flake8, eslint vs
-biome). Each adapter is tested with the fake ToolRunner (green + failing). Split below.
+**Goal:** `verify` supports Rust, Python, TS/JS, Java, Dart — one self-registering file
+each, `internal/quality/lang_<name>.go`, mirroring the existing `lang_go.go`/`lang_rust.go`.
+Each `init()` calls `register(name, ctor)` (no `adapters` map; `verify` resolves via
+`quality.AdapterFor`). Respect per-language `standard` (ruff vs black+flake8, eslint vs
+biome) as a branch inside the file. Tested with the fake ToolRunner. Split below.
 
 ### [x] 5a — Rust adapter
 **Read:** AGENTS.md · docs/ARCHITECTURE.md (tool matrix) · internal/quality/go (template) · internal/cli/verify.go
-**Steps:** `internal/quality/rust` wrapping `cargo fmt` (format), `cargo clippy -D warnings`
-(lint), `cargo test` (test); gate tools rustfmt/clippy-driver/cargo (matching detection);
-wire into the `adapters` map.
+**Steps:** `internal/quality/lang_rust.go` wrapping `cargo fmt` (format), `cargo clippy
+-D warnings` (lint), `cargo test` (test); gate tools rustfmt/clippy-driver/cargo (matching
+detection); self-register via `register("rust", …)`.
 **Acceptance:** Fake-ToolRunner tests cover format check/fix, lint & test exit-code mapping,
-and a start error; `rust` is selectable in `verify`.
+and the stage→tool gating; `rust` is selectable in `verify`. *(Also refactored quality
+adapters to one self-registering file per language in the `quality` package — see ADR-006.)*
 
 ### [ ] 5b — Python adapter (ruff; black+flake8)
-**Read:** AGENTS.md · docs/ARCHITECTURE.md (tool matrix) · internal/quality/{go,rust} (templates) · internal/cli/verify.go · internal/config
-**Steps:** `internal/quality/python` honoring `standard` (ruff default; black+flake8).
+**Read:** AGENTS.md · docs/ARCHITECTURE.md (tool matrix) · internal/quality/lang_rust.go (template) · internal/config
+**Steps:** `internal/quality/lang_python.go` honoring `standard` (ruff default; black+flake8).
 **Acceptance:** Green + failing fixtures pass/fail; standard switch picks the right tools.
 
 ### [ ] 5c — TS/JS adapter (eslint; biome)
-**Read:** AGENTS.md · docs/ARCHITECTURE.md (tool matrix) · internal/quality/{go,rust} (templates) · internal/cli/verify.go · internal/config
-**Steps:** `internal/quality/javascript` honoring `standard` (eslint/prettier; biome) via npx.
+**Read:** AGENTS.md · docs/ARCHITECTURE.md (tool matrix) · internal/quality/lang_rust.go (template) · internal/config
+**Steps:** `internal/quality/lang_javascript.go` honoring `standard` (eslint/prettier; biome) via npx.
 **Acceptance:** Green + failing fixtures pass/fail; standard switch picks the right tools.
 
 ### [ ] 5d — Java adapter
-**Read:** AGENTS.md · docs/ARCHITECTURE.md (tool matrix) · internal/quality/{go,rust} (templates) · internal/cli/verify.go
-**Steps:** `internal/quality/java` wrapping the build tool (maven/gradle) for format/test.
+**Read:** AGENTS.md · docs/ARCHITECTURE.md (tool matrix) · internal/quality/lang_rust.go (template)
+**Steps:** `internal/quality/lang_java.go` wrapping the build tool (maven/gradle) for format/test.
 **Acceptance:** Green + failing fixtures pass/fail.
 
 ### [ ] 5e — Dart adapter
-**Read:** AGENTS.md · docs/ARCHITECTURE.md (tool matrix) · internal/quality/{go,rust} (templates) · internal/cli/verify.go
-**Steps:** `internal/quality/dart` wrapping `dart format`/`dart analyze`/`dart test`.
+**Read:** AGENTS.md · docs/ARCHITECTURE.md (tool matrix) · internal/quality/lang_rust.go (template)
+**Steps:** `internal/quality/lang_dart.go` wrapping `dart format`/`dart analyze`/`dart test`.
 **Acceptance:** Green + failing fixtures pass/fail.
 
 ## [ ] 6 — Versioning + doc honesty + `bump`

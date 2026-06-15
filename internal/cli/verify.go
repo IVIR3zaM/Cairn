@@ -9,19 +9,10 @@ import (
 	"github.com/IVIR3zaM/Cairn/internal/config"
 	"github.com/IVIR3zaM/Cairn/internal/detect"
 	"github.com/IVIR3zaM/Cairn/internal/quality"
-	golang "github.com/IVIR3zaM/Cairn/internal/quality/go"
-	"github.com/IVIR3zaM/Cairn/internal/quality/rust"
 	"github.com/IVIR3zaM/Cairn/internal/report"
 	"github.com/IVIR3zaM/Cairn/internal/runner"
 	"github.com/spf13/cobra"
 )
-
-// adapters maps a detected language to its quality adapter. Wiring a new language's
-// adapter (iteration 5) is a one-line entry here.
-var adapters = map[string]func(runner.ToolRunner) quality.Adapter{
-	"go":   func(r runner.ToolRunner) quality.Adapter { return golang.New(r) },
-	"rust": func(r runner.ToolRunner) quality.Adapter { return rust.New(r) },
-}
 
 // errVerifyFailed makes verify exit non-zero. The compact summary already explains
 // what failed, so the message itself stays silent (root sets SilenceErrors).
@@ -53,14 +44,14 @@ func newVerifyCmd() *cobra.Command {
 			run := runner.Exec{}
 			var all []quality.Result
 			for _, lang := range res.Languages {
-				ctor := adapters[lang.Name]
-				if ctor == nil {
-					continue // no adapter for this language yet
+				adapter, ok := quality.AdapterFor(lang.Name, run)
+				if !ok {
+					continue // no adapter registered for this language yet
 				}
 				if l, ok := cfg.Languages[lang.Name]; ok && !l.Enabled {
 					continue // explicitly disabled in cairn.yaml
 				}
-				results := quality.Run(context.Background(), cfg.Verify, ctor(run),
+				results := quality.Run(context.Background(), cfg.Verify, adapter,
 					quality.LangUnit{Name: lang.Name, Dir: lang.Dir}, toolInfo(lang))
 				all = append(all, results...)
 			}

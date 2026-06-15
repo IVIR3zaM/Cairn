@@ -78,9 +78,12 @@ docs/
 ```
 (Source layout under the bounded contexts appears as iterations add it.)
 
-**Adding a language** is a one-file change: drop `internal/detect/lang_<name>.go`
-self-registering its markers/tools/skip-dirs (see ARCHITECTURE "Adding a language or
-standard"). Nothing about a language is hardcoded in the detection engine.
+**Adding a language** is a two-file change, no central edits: drop
+`internal/detect/lang_<name>.go` (self-registers markers/tools/skip-dirs) and
+`internal/quality/lang_<name>.go` (self-registers its verify stages via `register(name,
+ctor)`). Both contexts use the same `init()`-registration pattern; `cairn verify`
+resolves adapters through `quality.AdapterFor`, so there is no `adapters` map to touch.
+See ARCHITECTURE "Adding a language or standard".
 
 ## How to work on this project
 
