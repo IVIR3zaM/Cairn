@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Detection domain (`internal/detect`): a language registry scanning the repo for
+  marker files to find languages, dirs, and package managers, resolving each
+  language's standard tools via lookup; `cairn doctor` renders the installed/missing
+  table with install hints.
 - Config domain (`internal/config`): typed `cairn.yaml` aggregate with in-code
   defaults, default-merge load, normalization, validation, and `LoadOrDefault`.
 - Buildable Go CLI skeleton (cobra): `cairn --version` and a `doctor` stub, plus

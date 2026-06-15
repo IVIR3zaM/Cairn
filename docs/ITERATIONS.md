@@ -27,7 +27,7 @@ errors; in-code defaults so a minimal file works; a `LoadOrDefault(path)`.
 **Acceptance:** Tests cover: full file, minimal file (defaults fill in), invalid file
 (actionable error). No I/O outside the loader.
 
-## [ ] 2 — Detection + `doctor`
+## [x] 2 — Detection + `doctor`
 **Goal:** Detect languages, dirs, package managers, and which standard tools are installed.
 **Read:** AGENTS.md · docs/ARCHITECTURE.md (Detection) · internal/config
 **Steps:** A `registry` mapping each language → marker files + default tools. Scan the

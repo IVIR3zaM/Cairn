@@ -27,9 +27,12 @@ func TestVersionFlagPrints(t *testing.T) {
 	}
 }
 
-func TestDoctorStub(t *testing.T) {
+// doctor wires the Detection context to the real filesystem/PATH; the detection
+// logic itself is exercised in internal/detect. Here we only confirm the command
+// runs and renders without error (run fatals on a non-nil error).
+func TestDoctorRuns(t *testing.T) {
 	out := run(t, "doctor")
-	if !strings.Contains(out, "not implemented") {
-		t.Errorf("doctor output %q missing stub marker", out)
+	if strings.TrimSpace(out) == "" {
+		t.Errorf("doctor produced no output")
 	}
 }
