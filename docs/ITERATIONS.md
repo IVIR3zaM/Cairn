@@ -88,7 +88,7 @@ lifecycle (`mvn -B verify` / `gradle check`), wrapper-aware (`mvnw`/`gradlew`) a
 non-interactive — no fabricated plugin goals (an early `spotless:check` hung). Gated on the JDK.
 **Acceptance:** Green + failing fixtures pass/fail.
 
-### [ ] 5e — Dart adapter
+### [x] 5e — Dart adapter
 **Read:** AGENTS.md · docs/ARCHITECTURE.md (tool matrix) · internal/quality/lang_rust.go (template)
 **Steps:** `internal/quality/lang_dart.go` wrapping `dart format`/`dart analyze`/`dart test`.
 **Acceptance:** Green + failing fixtures pass/fail.

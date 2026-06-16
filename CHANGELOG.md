@@ -43,6 +43,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   adding a language is adding a file, with no edits to the detection engine.
 
 ### Added
+- Dart quality adapter (`internal/quality/lang_dart.go`) wrapping the single `dart`
+  toolchain — `dart format` (check via `--set-exit-if-changed`), `dart analyze`, and
+  `dart test`; every stage gates on `dart` and it self-registers into `cairn verify`.
 - Java quality adapter (`internal/quality/lang_java.go`) delegating to the build tool's
   verification lifecycle — `maven` (default) or `gradle` — via the committed wrapper when
   present, gated on the JDK; self-registered into `cairn verify`.
