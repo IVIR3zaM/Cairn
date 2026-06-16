@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `cairn bump` now finds version manifests by **language-owned auto-discovery** instead of
+  scanning configured dirs: each language declares its manifest filename(s) in its detect spec
+  (rust→`Cargo.toml`, python→`pyproject.toml`, javascript→`package.json`, dart→`pubspec.yaml`),
+  and bump rewrites every detected unit's declared manifest via `version.ManagerFor` — so a
+  package is bumped because the language owns it, not because it appears in `cairn.yaml`. A
+  declared location with no writer yet (Dart's pubspec, until 6e) is skipped; `version_sync`
+  remains the fallback for custom files. Adding a manifest location is a one-file change.
 - `cairn bump [level|version]` computes the next version from `project.canonical_version`
   (semver level or explicit `X.Y.Z`; CalVer date-step), updates every registered manifest in
   the repo and each language dir, rewrites `version_sync` docs, advances `canonical_version`

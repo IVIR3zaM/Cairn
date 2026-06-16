@@ -28,6 +28,12 @@ type langSpec struct {
 	markers  []marker
 	tools    []Tool
 	skipDirs []string // generated dirs (deps/build output) to ignore while scanning
+	// versionManifests names this language's version-bearing manifest file(s) (e.g. Dart →
+	// pubspec.yaml). bump discovers a unit's manifests here and rewrites each via the
+	// version.ManagerFor(filename) writer, so a language owns where its version lives and
+	// adding a location is a one-file change. A declared file with no writer registered yet
+	// is simply skipped (native-only/future formats).
+	versionManifests []string
 	// singleRoot marks languages whose build tool owns the whole tree from one root
 	// manifest (e.g. a Maven reactor / Gradle multi-project): nested manifests are
 	// submodules of that build, not independent units, so detection collapses them to

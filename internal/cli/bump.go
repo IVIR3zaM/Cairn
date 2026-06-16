@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/IVIR3zaM/Cairn/internal/config"
+	"github.com/IVIR3zaM/Cairn/internal/detect"
 	"github.com/IVIR3zaM/Cairn/internal/report"
 	versioning "github.com/IVIR3zaM/Cairn/internal/version"
 	"github.com/spf13/cobra"
@@ -173,7 +174,7 @@ func runBumpWizard(wd string, cfg *config.Config, in io.Reader, out io.Writer, c
 // guards happen before it is called.
 func applyBump(wd string, cfg *config.Config, cur, next versioning.Version, out io.Writer, p palette) error {
 	var changed []string
-	mans, err := updateManifests(wd, cfg, next)
+	mans, err := updateManifests(wd, next)
 	if err != nil {
 		return err
 	}
@@ -297,14 +298,31 @@ func describeJump(p palette, cur, next versioning.Version) string {
 	}
 }
 
-// updateManifests sets next in every registered manifest found in the repo root and each
-// configured language dir, writing only files that changed. Returned paths are repo-relative
-// for a clean summary. A missing manifest is skipped; a present one without a version errors.
-func updateManifests(wd string, cfg *config.Config, next versioning.Version) ([]string, error) {
+// updateManifests sets next in each detected language's version-owned manifest, writing only
+// files that changed. It discovers locations from detection — every detected unit (repo root
+// and each sub-package, including pub-workspace members) contributes its declared manifest
+// filename(s), resolved to a writer via versioning.ManagerFor — so a manifest is updated
+// because the language owns it, not because a dir is listed in cairn.yaml. A declared file
+// with no writer registered yet is skipped; a missing file is skipped; a present file without
+// a locatable version errors. Returned paths are repo-relative and sorted for a clean summary.
+func updateManifests(wd string, next versioning.Version) ([]string, error) {
+	res, err := detect.Detect(os.DirFS(wd), lookupTool)
+	if err != nil {
+		return nil, err
+	}
 	var changed []string
-	for _, dir := range manifestDirs(cfg) {
-		for _, m := range versioning.Managers() {
-			rel := filepath.Join(dir, m.Filename())
+	seen := map[string]bool{} // a manifest path is rewritten at most once
+	for _, lang := range res.Languages {
+		for _, fname := range lang.VersionManifests {
+			m, ok := versioning.ManagerFor(fname)
+			if !ok {
+				continue // declared location with no writer yet (native-only/future format)
+			}
+			rel := filepath.Join(lang.Dir, fname)
+			if seen[rel] {
+				continue
+			}
+			seen[rel] = true
 			path := filepath.Join(wd, rel)
 			content, err := os.ReadFile(path)
 			if os.IsNotExist(err) {
@@ -326,24 +344,8 @@ func updateManifests(wd string, cfg *config.Config, next versioning.Version) ([]
 			changed = append(changed, rel)
 		}
 	}
+	sort.Strings(changed)
 	return changed, nil
-}
-
-// manifestDirs is the deduped, sorted set of directories to scan for manifests: the repo
-// root plus each language's dir, so a polyglot monorepo bumps every package in one pass.
-func manifestDirs(cfg *config.Config) []string {
-	set := map[string]struct{}{".": {}}
-	for _, l := range cfg.Languages {
-		if l.Dir != "" {
-			set[filepath.Clean(l.Dir)] = struct{}{}
-		}
-	}
-	dirs := make([]string, 0, len(set))
-	for d := range set {
-		dirs = append(dirs, d)
-	}
-	sort.Strings(dirs)
-	return dirs
 }
 
 // updateCanonical advances project.canonical_version in cairn.yaml to next via a targeted

@@ -19,6 +19,27 @@ func unit(r *Result, name string) (Language, bool) {
 	return Language{}, false
 }
 
+// TestDetect_VersionManifests pins the language-owned version-location contract bump relies
+// on: a detected unit carries its language's declared manifest filename(s), while a language
+// with no version manifest (Go's go.mod has no version) carries none.
+func TestDetect_VersionManifests(t *testing.T) {
+	fsys := fstest.MapFS{
+		"go.mod":        {},
+		"rs/Cargo.toml": {},
+	}
+	res, err := Detect(fsys, allMissing)
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	rust, ok := unit(res, "rust")
+	if !ok || len(rust.VersionManifests) != 1 || rust.VersionManifests[0] != "Cargo.toml" {
+		t.Errorf("rust manifests = %v, want [Cargo.toml]", rust.VersionManifests)
+	}
+	if g, ok := unit(res, "go"); !ok || len(g.VersionManifests) != 0 {
+		t.Errorf("go manifests = %v, want none", g.VersionManifests)
+	}
+}
+
 // One marker per language across nested dirs, plus a marker buried in node_modules
 // that must be ignored — covers language, dir, and package-manager detection at once.
 func TestDetect_LanguagesDirsAndPackageManagers(t *testing.T) {

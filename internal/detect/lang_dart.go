@@ -4,10 +4,11 @@ import "strings"
 
 func init() {
 	register(langSpec{
-		name:     "dart",
-		markers:  []marker{{"pubspec.yaml", "pub"}},
-		tools:    []Tool{{"dart", "https://dart.dev/get-dart"}},
-		skipDirs: []string{".dart_tool"},
+		name:             "dart",
+		markers:          []marker{{"pubspec.yaml", "pub"}},
+		tools:            []Tool{{"dart", "https://dart.dev/get-dart"}},
+		skipDirs:         []string{".dart_tool"},
+		versionManifests: []string{"pubspec.yaml"}, // writer lands in 6e
 		// A Dart pub workspace root (Dart 3.6+) lists its members under a top-level
 		// `workspace:` key and owns no package code itself; detection defers to those
 		// members so each is verified in its own dir.

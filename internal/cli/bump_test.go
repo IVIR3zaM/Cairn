@@ -70,6 +70,31 @@ func TestRunBumpUpdatesAllSurfaces(t *testing.T) {
 	}
 }
 
+// TestRunBumpAutoDiscoversManifests proves the language-owned discovery path: with an empty
+// cfg.Languages, bump still finds and bumps a manifest purely from detection (a Rust crate in
+// a sub-dir), while a declared-but-writerless manifest (Dart's pubspec.yaml, whose writer
+// lands in 6e) is left untouched rather than erroring.
+func TestRunBumpAutoDiscoversManifests(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "cairn.yaml", "project:\n  canonical_version: \"0.1.0\"\n")
+	crate := writeFile(t, dir, "engine/Cargo.toml", "[package]\nname = \"x\"\nversion = \"0.1.0\"\n")
+	pubspec := writeFile(t, dir, "app/pubspec.yaml", "name: app\nversion: 0.1.0\n")
+
+	cfg := config.Default()
+	cfg.Project.CanonicalVersion = "0.1.0" // note: no cfg.Languages entries at all
+
+	var out bytes.Buffer
+	if err := runBump(dir, cfg, "minor", time.Now(), &out, false); err != nil {
+		t.Fatalf("runBump: %v", err)
+	}
+	if got := read(t, crate); !strings.Contains(got, `version = "0.2.0"`) {
+		t.Errorf("auto-discovered Cargo.toml not bumped: %s", got)
+	}
+	if got := read(t, pubspec); !strings.Contains(got, "version: 0.1.0") {
+		t.Errorf("pubspec without a writer should be untouched in 6d: %s", got)
+	}
+}
+
 // TestRunBumpExplicitVersion confirms an explicit X.Y.Z is honored over level math.
 func TestRunBumpExplicitVersion(t *testing.T) {
 	dir := t.TempDir()

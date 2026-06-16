@@ -8,6 +8,7 @@ func init() {
 			{"setup.py", "pip"},
 			{"requirements.txt", "pip"},
 		},
+		versionManifests: []string{"pyproject.toml"},
 		tools: []Tool{
 			{"ruff", "pip install ruff"},
 			{"black", "pip install black"},

@@ -32,6 +32,9 @@ type Language struct {
 	Dir            string
 	PackageManager string
 	Tools          []ToolStatus
+	// VersionManifests are this unit's version-bearing manifest filenames (from the
+	// language's detect spec), relative to Dir. bump resolves each to a version.Manager.
+	VersionManifests []string
 }
 
 // Result is the full detection outcome, languages sorted by (name, dir).
@@ -134,10 +137,11 @@ func Detect(fsys fs.FS, look LookupFunc) (*Result, error) {
 			tools = append(tools, ToolStatus{Tool: t, Installed: lookCached(t.Name)})
 		}
 		langs = append(langs, Language{
-			Name:           k.name,
-			Dir:            k.dir,
-			PackageManager: pm,
-			Tools:          tools,
+			Name:             k.name,
+			Dir:              k.dir,
+			PackageManager:   pm,
+			Tools:            tools,
+			VersionManifests: spec.versionManifests,
 		})
 	}
 	sort.Slice(langs, func(i, j int) bool {
