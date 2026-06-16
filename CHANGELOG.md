@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `cairn bump [level|version]` computes the next version from `project.canonical_version`
+  (semver level or explicit `X.Y.Z`; CalVer date-step), updates every registered manifest in
+  the repo and each language dir, rewrites `version_sync` docs, advances `canonical_version`
+  in `cairn.yaml`, and prints a suggested release commit/tag — never committing. Unset
+  canonical and non-increasing bumps are refused. Run with no argument for a colorful,
+  interactive wizard (patch/minor/major/custom with each target version shown, a color-coded
+  jump explanation, and a loud double-confirm safeguard for downgrades); honors
+  `NO_COLOR`/non-TTY and falls back to requiring an explicit level/version when not run
+  interactively. The suggested release commit now follows `commits.convention`
+  (`chore(release): X` / `🔖 Release X` / `Release X`) and adds `-s` when `commits.signoff`
+  is set, instead of always proposing a Conventional Commits subject.
 - Self-registering `VersionManager` registry (`version.ManagerFor`/`Managers`) with
   npm/cargo/pyproject manifest writers, plus the mutating `version.Rewrite` that fixes
   drifted `version_sync` docs — the library layer behind the upcoming `cairn bump`.
@@ -23,6 +34,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   per-file reason.
 
 ### Fixed
+- CLI errors are now printed to stderr instead of being swallowed: the root command
+  silences cobra's own error printing (so `verify` renders its own summary), but `main`
+  previously exited non-zero without a message — so a failed `bump` (unset
+  `canonical_version`, a downgrade guard) or an unknown command produced no output at all.
+  `Execute` now surfaces every non-already-reported error.
 - Dart pub workspaces (Dart 3.6+) are now verified per member package instead of once at
   the aggregator root: detection recognizes a `workspace:` pubspec as an aggregator that
   owns no code and defers to the member packages nested beneath it, so `verify` runs

@@ -121,7 +121,7 @@ mutating sibling of `Check`) that fixes every `{VERSION}` pattern in the version
 `Rewrite` turns a drifted doc honest and reports changed files; adding a manifest is one
 self-registering file (no engine edits).
 
-### [ ] 6c — `cairn bump` command (compute next, update manifests + docs, suggest commit/tag)
+### [x] 6c — `cairn bump` command (compute next, update manifests + docs, suggest commit/tag)
 **Read:** AGENTS.md · docs/ARCHITECTURE.md (Versioning, data flow) · internal/version · internal/{config,report} · internal/cli/{root,verify}.go
 **Steps:** `cairn bump <level|version>` computes next (level via `Next`/`NextCalVer`, or an
 explicit version) from `project.canonical_version`; updates registered manifests in the
@@ -130,6 +130,29 @@ repo + each language dir, rewrites version_sync docs, and updates `canonical_ver
 and empty-version rejected.
 **Acceptance:** `bump` updates manifests + doc patterns + canonical; downgrade and
 empty-version cases are guarded; prints a suggested commit/tag and does not commit.
+
+### [ ] 6d — Language-owned version locations (auto-discovery); version_sync as fallback
+**Goal:** Each language knows where its version(s) sit, so `bump`/`verify` find and update
+them automatically from detection — `version_sync` regex patterns become a **fallback** for
+custom/extra spots (READMEs, generated snippets), not the primary mechanism. Today `bump`
+only scans the repo root + a language's dir and has no Dart manifest, so a Dart workspace's
+`packages/*/pubspec.yaml` versions and `^{VERSION}` interdeps are missed.
+**Read:** AGENTS.md · docs/ARCHITECTURE.md (Versioning, Detection, extension points) ·
+internal/detect/lang_dart.go · internal/detect/detect.go · internal/version/manifest.go ·
+internal/cli/bump.go
+**Steps:**
+- Let a language declare its version-manifest filename(s) in its self-registered detect
+  spec (e.g. Dart → `pubspec.yaml`); for each detected unit — including pub-workspace
+  members — resolve the concrete manifest paths (reuse the existing `workspace` predicate).
+- Add `internal/version/manifest_pubspec.go`: a pubspec `version:` writer that is also
+  workspace-aware, rewriting sibling `^{VERSION}` interdependency constraints in lockstep.
+- Rework `bump` to update language-owned locations first (via `ManagerFor(filename)`), then
+  apply `version_sync.Rewrite` as the fallback for custom files. `verify`'s honesty check
+  gains the same language-owned coverage so drift is caught without per-file config.
+**Acceptance:** In a Dart-workspace fixture, `bump` updates every member `pubspec.yaml`
+`version:` and sibling `^` constraint with no per-file `version_sync` config; a custom
+README pattern still updates via `version_sync`; adding a language's manifest location is a
+one-file change. *(Split into 6d discovery+wiring / 6e pubspec-workspace manager if it grows.)*
 
 ## [ ] 7 — Changelog (Keep a Changelog)
 **Goal:** Promote `[Unreleased]` → version+date with refreshed compare links on `bump`.

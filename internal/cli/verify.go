@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -18,10 +17,6 @@ import (
 	versioning "github.com/IVIR3zaM/Cairn/internal/version"
 	"github.com/spf13/cobra"
 )
-
-// errVerifyFailed makes verify exit non-zero. The compact summary already explains
-// what failed, so the message itself stays silent (root sets SilenceErrors).
-var errVerifyFailed = errors.New("verify failed")
 
 // smartExec wraps runner.Exec to resolve tool paths using custom lookup first, and (for
 // --verbose) announces and tees each tool's live output so you can see exactly what runs.
@@ -190,13 +185,13 @@ func newVerifyCmd() *cobra.Command {
 			syncFailed, err := checkVersionSync(wd, cfg, rep, obs)
 			if err != nil {
 				rep.Error(err)
-				return err
+				return errSilent
 			}
 
 			rep.Summary(obs.steps)
 
 			if quality.Failed(all) || syncFailed {
-				return errVerifyFailed
+				return errSilent
 			}
 			return nil
 		},
