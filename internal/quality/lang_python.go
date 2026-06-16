@@ -51,7 +51,7 @@ func pythonRuffFormat(ctx context.Context, run runner.ToolRunner, unit LangUnit,
 	if mode == ModeFix {
 		args = []string{"format", "."}
 	}
-	res, err := run.Run(ctx, runner.Command{Name: "ruff", Args: args, Dir: unit.Dir})
+	res, err := run.Run(ctx, runner.Command{Name: "ruff", Args: args, Dir: unit.Dir, Env: pyColor(unit)})
 	if r, bad := startOrExitFailure(res, err); bad {
 		return r
 	}
@@ -64,9 +64,13 @@ func pythonRuffFormat(ctx context.Context, run runner.ToolRunner, unit LangUnit,
 
 // pythonRuffLint runs ruff check to find linting issues.
 func pythonRuffLint(ctx context.Context, run runner.ToolRunner, unit LangUnit, _ Mode) StepResult {
-	res, err := run.Run(ctx, runner.Command{Name: "ruff", Args: []string{"check", "."}, Dir: unit.Dir})
+	res, err := run.Run(ctx, runner.Command{Name: "ruff", Args: []string{"check", "."}, Dir: unit.Dir, Env: pyColor(unit)})
 	return passOrFail(res, err)
 }
+
+// pyColor forces colored output for the Python tools that honor it (ruff, black, pytest);
+// PY_COLORS is pytest's own switch, FORCE_COLOR covers the click/rich based tools.
+func pyColor(unit LangUnit) []string { return colorEnv(unit, "FORCE_COLOR=1", "PY_COLORS=1") }
 
 // pythonBlackFormat checks formatting (`black --check`) or rewrites in place (`black`)
 // in fix mode.
@@ -75,7 +79,7 @@ func pythonBlackFormat(ctx context.Context, run runner.ToolRunner, unit LangUnit
 	if mode == ModeFix {
 		args = []string{"."}
 	}
-	res, err := run.Run(ctx, runner.Command{Name: "black", Args: args, Dir: unit.Dir})
+	res, err := run.Run(ctx, runner.Command{Name: "black", Args: args, Dir: unit.Dir, Env: pyColor(unit)})
 	if r, bad := startOrExitFailure(res, err); bad {
 		return r
 	}
@@ -94,6 +98,6 @@ func pythonFlake8Lint(ctx context.Context, run runner.ToolRunner, unit LangUnit,
 
 // pythonTest runs tests via pytest.
 func pythonTest(ctx context.Context, run runner.ToolRunner, unit LangUnit, _ Mode) StepResult {
-	res, err := run.Run(ctx, runner.Command{Name: "python3", Args: []string{"-m", "pytest"}, Dir: unit.Dir})
+	res, err := run.Run(ctx, runner.Command{Name: "python3", Args: []string{"-m", "pytest"}, Dir: unit.Dir, Env: pyColor(unit)})
 	return passOrFail(res, err)
 }

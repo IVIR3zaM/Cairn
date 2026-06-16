@@ -36,6 +36,10 @@ func dartLint(ctx context.Context, run runner.ToolRunner, unit LangUnit, _ Mode)
 }
 
 func dartTest(ctx context.Context, run runner.ToolRunner, unit LangUnit, _ Mode) StepResult {
-	res, err := run.Run(ctx, runner.Command{Name: "dart", Args: []string{"test"}, Dir: unit.Dir})
+	args := []string{"test"}
+	if unit.Color {
+		args = append(args, "--color") // package:test forces color even when piped
+	}
+	res, err := run.Run(ctx, runner.Command{Name: "dart", Args: args, Dir: unit.Dir})
 	return passOrFail(res, err)
 }

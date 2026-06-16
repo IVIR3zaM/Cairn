@@ -26,17 +26,20 @@ func rustFormat(ctx context.Context, run runner.ToolRunner, unit LangUnit, mode 
 	if mode == ModeFix {
 		args = []string{"fmt"}
 	}
-	res, err := run.Run(ctx, runner.Command{Name: "cargo", Args: args, Dir: unit.Dir})
+	res, err := run.Run(ctx, runner.Command{Name: "cargo", Args: args, Dir: unit.Dir, Env: cargoColor(unit)})
 	return passOrFail(res, err)
 }
 
 // rustLint runs clippy with warnings promoted to errors so any lint fails the stage.
 func rustLint(ctx context.Context, run runner.ToolRunner, unit LangUnit, _ Mode) StepResult {
-	res, err := run.Run(ctx, runner.Command{Name: "cargo", Args: []string{"clippy", "--", "-D", "warnings"}, Dir: unit.Dir})
+	res, err := run.Run(ctx, runner.Command{Name: "cargo", Args: []string{"clippy", "--", "-D", "warnings"}, Dir: unit.Dir, Env: cargoColor(unit)})
 	return passOrFail(res, err)
 }
 
 func rustTest(ctx context.Context, run runner.ToolRunner, unit LangUnit, _ Mode) StepResult {
-	res, err := run.Run(ctx, runner.Command{Name: "cargo", Args: []string{"test"}, Dir: unit.Dir})
+	res, err := run.Run(ctx, runner.Command{Name: "cargo", Args: []string{"test"}, Dir: unit.Dir, Env: cargoColor(unit)})
 	return passOrFail(res, err)
 }
+
+// cargoColor forces cargo's colored output across every stage when color is requested.
+func cargoColor(unit LangUnit) []string { return colorEnv(unit, "CARGO_TERM_COLOR=always") }

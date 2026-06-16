@@ -31,9 +31,13 @@ func init() {
 // mavenVerify runs the Maven verification lifecycle (`verify`: compile, configured checks
 // such as checkstyle, and tests) in batch (non-interactive) mode via the wrapper if present.
 func mavenVerify(ctx context.Context, run runner.ToolRunner, unit LangUnit, _ Mode) StepResult {
+	args := []string{"-B", "verify"}
+	if unit.Color {
+		args = append(args, "-Dstyle.color=always") // Maven's own ANSI override
+	}
 	res, err := run.Run(ctx, runner.Command{
 		Name: buildTool(unit.Dir, "mvnw", "mvn"),
-		Args: []string{"-B", "verify"},
+		Args: args,
 		Dir:  unit.Dir,
 	})
 	return passOrFail(res, err)
@@ -42,9 +46,14 @@ func mavenVerify(ctx context.Context, run runner.ToolRunner, unit LangUnit, _ Mo
 // gradleCheck runs Gradle's `check` task (compile, linters, and tests) with a plain,
 // non-interactive console via the wrapper if present.
 func gradleCheck(ctx context.Context, run runner.ToolRunner, unit LangUnit, _ Mode) StepResult {
+	// "rich" keeps the non-interactive guarantee while forcing color; "plain" is colorless.
+	console := "--console=plain"
+	if unit.Color {
+		console = "--console=rich"
+	}
 	res, err := run.Run(ctx, runner.Command{
 		Name: buildTool(unit.Dir, "gradlew", "gradle"),
-		Args: []string{"--console=plain", "check"},
+		Args: []string{console, "check"},
 		Dir:  unit.Dir,
 	})
 	return passOrFail(res, err)

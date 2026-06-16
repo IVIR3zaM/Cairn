@@ -43,6 +43,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   adding a language is adding a file, with no edits to the detection engine.
 
 ### Added
+- `cairn verify --verbose` now preserves each tool's own colors: on a color TTY it forces
+  the tool to emit ANSI (which it otherwise auto-disables when its output is captured)
+  via each language's native knob — `CARGO_TERM_COLOR`, `FORCE_COLOR`/`PY_COLORS`,
+  `CLICOLOR_FORCE`, Maven `-Dstyle.color`, Gradle `--console=rich`, `dart test --color`.
+  Piped/`NO_COLOR` runs stay escape-code free. The knobs live in each `lang_<name>.go`.
 - Dart quality adapter (`internal/quality/lang_dart.go`) wrapping the single `dart`
   toolchain — `dart format` (check via `--set-exit-if-changed`), `dart analyze`, and
   `dart test`; every stage gates on `dart` and it self-registers into `cairn verify`.

@@ -145,7 +145,8 @@ func newVerifyCmd() *cobra.Command {
 			}
 
 			out := cmd.OutOrStdout()
-			rep := report.New(out, report.Detect(out, quiet, verbose))
+			opts := report.Detect(out, quiet, verbose)
+			rep := report.New(out, opts)
 			rep.Start("cairn verify")
 
 			run := smartExec{lookupTool: lookupTool}
@@ -176,7 +177,10 @@ func newVerifyCmd() *cobra.Command {
 					continue // explicitly disabled in cairn.yaml
 				}
 				results := quality.Run(context.Background(), cfg.Verify, adapter,
-					quality.LangUnit{Name: lang.Name, Dir: lang.Dir}, toolInfo(lang), obs)
+					// Force tool color only when streaming to a color TTY (verbose); piped or
+					// NO_COLOR runs stay clean so captured output never carries escape codes.
+					quality.LangUnit{Name: lang.Name, Dir: lang.Dir, Color: verbose && opts.Color},
+					toolInfo(lang), obs)
 				all = append(all, results...)
 			}
 

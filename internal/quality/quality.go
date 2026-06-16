@@ -62,10 +62,13 @@ const (
 	StatusWarn
 )
 
-// LangUnit is the language instance under verification.
+// LangUnit is the language instance under verification. Color asks adapters to force
+// their tools' colored output (set by the CLI for a verbose run on a color TTY); the
+// per-tool knob that honors it lives in each lang_<name>.go, not in the gate core.
 type LangUnit struct {
-	Name string
-	Dir  string
+	Name  string
+	Dir   string
+	Color bool
 }
 
 // StepResult is what a single Step.Run reports.

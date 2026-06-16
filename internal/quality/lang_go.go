@@ -38,7 +38,9 @@ func goFormat(ctx context.Context, run runner.ToolRunner, unit LangUnit, mode Mo
 }
 
 func goLint(ctx context.Context, run runner.ToolRunner, unit LangUnit, _ Mode) StepResult {
-	res, err := run.Run(ctx, runner.Command{Name: "golangci-lint", Args: []string{"run"}, Dir: unit.Dir})
+	// golangci-lint uses fatih/color, which honors CLICOLOR_FORCE; gofumpt/go test emit no
+	// color, so only the linter needs a knob.
+	res, err := run.Run(ctx, runner.Command{Name: "golangci-lint", Args: []string{"run"}, Dir: unit.Dir, Env: colorEnv(unit, "CLICOLOR_FORCE=1")})
 	return passOrFail(res, err)
 }
 

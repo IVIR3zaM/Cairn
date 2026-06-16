@@ -2,10 +2,24 @@ package quality
 
 import (
 	"context"
+	"os"
 	"strings"
 
 	"github.com/IVIR3zaM/Cairn/internal/runner"
 )
+
+// colorEnv returns the inherited process environment plus the given color-forcing
+// variables when the unit asked for color (a verbose run on a color TTY); otherwise nil,
+// leaving the command to inherit the environment unchanged. The variable names are
+// tool-specific and supplied by each lang_<name>.go — this helper holds no tool knowledge,
+// only the merge. A command keeps capturing into a pipe, so without an explicit override
+// every tool would auto-disable color; these vars tell it to emit color anyway.
+func colorEnv(unit LangUnit, vars ...string) []string {
+	if !unit.Color || len(vars) == 0 {
+		return nil
+	}
+	return append(os.Environ(), vars...)
+}
 
 // execFunc runs one stage by shelling out through run and maps the outcome to a result.
 type execFunc func(ctx context.Context, run runner.ToolRunner, unit LangUnit, mode Mode) StepResult

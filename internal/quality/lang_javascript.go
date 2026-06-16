@@ -43,13 +43,17 @@ func jsPrettierFormat(ctx context.Context, run runner.ToolRunner, unit LangUnit,
 	if mode == ModeFix {
 		args = []string{"prettier", "--write", "."}
 	}
-	res, err := run.Run(ctx, runner.Command{Name: "npx", Args: args, Dir: unit.Dir})
+	res, err := run.Run(ctx, runner.Command{Name: "npx", Args: args, Dir: unit.Dir, Env: jsColor(unit)})
 	return passOrFail(res, err)
 }
 
+// jsColor forces colored output for the node toolchain (eslint/prettier/biome/npm all
+// honor FORCE_COLOR) when color is requested.
+func jsColor(unit LangUnit) []string { return colorEnv(unit, "FORCE_COLOR=1") }
+
 // jsEslintLint runs eslint; any reported error fails the stage via its exit code.
 func jsEslintLint(ctx context.Context, run runner.ToolRunner, unit LangUnit, _ Mode) StepResult {
-	res, err := run.Run(ctx, runner.Command{Name: "npx", Args: []string{"eslint", "."}, Dir: unit.Dir})
+	res, err := run.Run(ctx, runner.Command{Name: "npx", Args: []string{"eslint", "."}, Dir: unit.Dir, Env: jsColor(unit)})
 	return passOrFail(res, err)
 }
 
@@ -60,18 +64,18 @@ func jsBiomeFormat(ctx context.Context, run runner.ToolRunner, unit LangUnit, mo
 	if mode == ModeFix {
 		args = []string{"@biomejs/biome", "format", "--write", "."}
 	}
-	res, err := run.Run(ctx, runner.Command{Name: "npx", Args: args, Dir: unit.Dir})
+	res, err := run.Run(ctx, runner.Command{Name: "npx", Args: args, Dir: unit.Dir, Env: jsColor(unit)})
 	return passOrFail(res, err)
 }
 
 // jsBiomeLint runs biome's linter; a non-zero exit (issues found) fails the stage.
 func jsBiomeLint(ctx context.Context, run runner.ToolRunner, unit LangUnit, _ Mode) StepResult {
-	res, err := run.Run(ctx, runner.Command{Name: "npx", Args: []string{"@biomejs/biome", "lint", "."}, Dir: unit.Dir})
+	res, err := run.Run(ctx, runner.Command{Name: "npx", Args: []string{"@biomejs/biome", "lint", "."}, Dir: unit.Dir, Env: jsColor(unit)})
 	return passOrFail(res, err)
 }
 
 // jsTest runs the package's test script (`npm test`); its exit code drives the result.
 func jsTest(ctx context.Context, run runner.ToolRunner, unit LangUnit, _ Mode) StepResult {
-	res, err := run.Run(ctx, runner.Command{Name: "npm", Args: []string{"test"}, Dir: unit.Dir})
+	res, err := run.Run(ctx, runner.Command{Name: "npm", Args: []string{"test"}, Dir: unit.Dir, Env: jsColor(unit)})
 	return passOrFail(res, err)
 }
