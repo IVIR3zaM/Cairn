@@ -1,6 +1,8 @@
 package version
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"testing/fstest"
 
@@ -65,6 +67,32 @@ func TestCheckNoConfigIsNoop(t *testing.T) {
 	}
 	if d, err := Check(nil, "1.0.0", nil); err != nil || d != nil {
 		t.Errorf("no files: got %v, %v", d, err)
+	}
+}
+
+func TestRewriteMakesDocHonest(t *testing.T) {
+	dir := t.TempDir()
+	readme := filepath.Join(dir, "README.md")
+	if err := os.WriteFile(readme, []byte("install mylib:0.0.9\nbadge version-0.0.9 ok"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	files := []config.VersionSyncFile{
+		{Path: "README.md", Patterns: []string{"mylib:{VERSION}", "version-{VERSION}"}},
+	}
+
+	changed, err := Rewrite(dir, "0.1.0", files)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	if len(changed) != 1 || changed[0] != "README.md" {
+		t.Fatalf("changed = %v, want [README.md]", changed)
+	}
+	// The rewritten doc is now honest, and a re-run is a no-op (idempotent).
+	if drifts, _ := Check(os.DirFS(dir), "0.1.0", files); len(drifts) != 0 {
+		t.Errorf("doc still drifts after rewrite: %v", drifts)
+	}
+	if again, _ := Rewrite(dir, "0.1.0", files); len(again) != 0 {
+		t.Errorf("second rewrite should change nothing, got %v", again)
 	}
 }
 

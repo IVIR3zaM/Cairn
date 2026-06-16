@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Self-registering `VersionManager` registry (`version.ManagerFor`/`Managers`) with
+  npm/cargo/pyproject manifest writers, plus the mutating `version.Rewrite` that fixes
+  drifted `version_sync` docs — the library layer behind the upcoming `cairn bump`.
 - Strict mode for the quality gate: `verify.strict` (repo-wide) and per-language
   `languages.<name>.strict` (which overrides it) promote a linter's most lenient
   diagnostics to hard failures wherever the toolchain has such a tier — `dart analyze

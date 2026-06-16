@@ -3,6 +3,8 @@ package version
 import (
 	"fmt"
 	"io/fs"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -75,6 +77,63 @@ func Check(fsys fs.FS, canonical string, files []config.VersionSyncFile) ([]Drif
 		}
 	}
 	return drifts, nil
+}
+
+// Rewrite is the mutating sibling of Check: for each version_sync file it sets every
+// {VERSION} pattern to canonical, writing the file back only when it changed. It returns
+// the paths it modified so bump can report them. Patterns that never match are left alone
+// (Check is what flags those); an empty canonical or no files is a no-op. Paths are joined
+// under root so the caller controls the working directory.
+func Rewrite(root, canonical string, files []config.VersionSyncFile) ([]string, error) {
+	if canonical == "" || len(files) == 0 {
+		return nil, nil
+	}
+	want, err := Parse(canonical)
+	if err != nil {
+		return nil, fmt.Errorf("project.canonical_version: %w", err)
+	}
+
+	var changed []string
+	for _, f := range files {
+		path := filepath.Join(root, f.Path)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return changed, fmt.Errorf("version_sync %s: %w", f.Path, err)
+		}
+		updated, did, err := rewriteText(string(data), want, f.Patterns)
+		if err != nil {
+			return changed, fmt.Errorf("version_sync %s: %w", f.Path, err)
+		}
+		if !did {
+			continue
+		}
+		if err := os.WriteFile(path, []byte(updated), 0o644); err != nil {
+			return changed, fmt.Errorf("version_sync %s: %w", f.Path, err)
+		}
+		changed = append(changed, f.Path)
+	}
+	return changed, nil
+}
+
+// rewriteText sets every {VERSION} occurrence of each pattern in text to want, reporting
+// whether anything changed. Because a pattern is literal text around the placeholder, the
+// replacement is just the pattern with {VERSION} → want, applied literally so a "$" in the
+// surrounding text is never treated as a regex expansion.
+func rewriteText(text string, want Version, patterns []string) (string, bool, error) {
+	changed := false
+	for _, pat := range patterns {
+		re, err := compile(pat)
+		if err != nil {
+			return text, false, fmt.Errorf("pattern %q: %w", pat, err)
+		}
+		repl := strings.ReplaceAll(pat, placeholder, want.String())
+		next := re.ReplaceAllLiteralString(text, repl)
+		if next != text {
+			changed = true
+			text = next
+		}
+	}
+	return text, changed, nil
 }
 
 // compile turns a version_sync pattern into a regex: literal text is escaped and each

@@ -109,15 +109,27 @@ drifted doc fails verify.
 **Acceptance:** version parse/compare/`Next` + sync drift are tested; `verify` fails on a
 drifted doc and passes when honest; no `version_sync` / empty canonical ⇒ no-op (no steps).
 
-### [ ] 6b — VersionManager registry + manifests + version_sync rewrite + `cairn bump`
-**Read:** AGENTS.md · docs/ARCHITECTURE.md (Versioning, extension points) · internal/version · internal/{config,report,cli}
+### [x] 6b — VersionManager registry + manifests + version_sync mutating rewrite
+**Read:** AGENTS.md · docs/ARCHITECTURE.md (Versioning, extension points) · internal/version · internal/config · internal/quality/registry.go (registry template)
 **Steps:** per-manifest `VersionManager` as a **self-registering registry**
-(`internal/version/manifest_<name>.go`, `register`/`ManagerFor`, panic on dup), each
-delegating to native tooling where it exists else safe regex — no central manifest map;
-version_sync rewrite (mutating); `cairn bump <level|version>` computes next, updates
-manifests + doc patterns, prints suggested commit/tag, never commits; downgrade rejected.
-**Acceptance:** `bump` updates manifests + doc patterns; downgrade and empty-version cases
-are guarded; adding a manifest is one self-registering file (no engine edits).
+(`internal/version/manifest_<name>.go`, `register`/`ManagerFor`/`Managers`, panic on dup),
+each a pure byte-transform setting the version via safe regex (native tooling is a later
+opt-in, documented not stubbed) — no central manifest map; add `version.Rewrite` (the
+mutating sibling of `Check`) that fixes every `{VERSION}` pattern in the version_sync docs.
+**Acceptance:** `ManagerFor`/`Managers` resolve via self-registration (dup panics);
+`SetVersion` rewrites npm/cargo/pyproject versions (and is a no-op when already correct);
+`Rewrite` turns a drifted doc honest and reports changed files; adding a manifest is one
+self-registering file (no engine edits).
+
+### [ ] 6c — `cairn bump` command (compute next, update manifests + docs, suggest commit/tag)
+**Read:** AGENTS.md · docs/ARCHITECTURE.md (Versioning, data flow) · internal/version · internal/{config,report} · internal/cli/{root,verify}.go
+**Steps:** `cairn bump <level|version>` computes next (level via `Next`/`NextCalVer`, or an
+explicit version) from `project.canonical_version`; updates registered manifests in the
+repo + each language dir, rewrites version_sync docs, and updates `canonical_version` in
+`cairn.yaml` so verify stays green; prints suggested commit/tag; never commits; downgrade
+and empty-version rejected.
+**Acceptance:** `bump` updates manifests + doc patterns + canonical; downgrade and
+empty-version cases are guarded; prints a suggested commit/tag and does not commit.
 
 ## [ ] 7 — Changelog (Keep a Changelog)
 **Goal:** Promote `[Unreleased]` → version+date with refreshed compare links on `bump`.
