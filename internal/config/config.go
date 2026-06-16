@@ -35,11 +35,13 @@ type Project struct {
 	Versioning       string `yaml:"versioning"`
 }
 
-// Language is one detected/enabled language unit.
+// Language is one detected/enabled language unit. Strict overrides the repo-wide
+// verify.strict default for just this language; nil (the absent case) inherits it.
 type Language struct {
 	Dir      string `yaml:"dir"`
 	Enabled  bool   `yaml:"enabled"`
 	Standard string `yaml:"standard,omitempty"`
+	Strict   *bool  `yaml:"strict,omitempty"`
 }
 
 // Step is a toggleable verify stage (format/lint/typecheck/test/build).
@@ -49,13 +51,17 @@ type Step struct {
 	Mode     string `yaml:"mode,omitempty"`
 }
 
-// Verify holds the global stage toggles and the per-stage timeout.
+// Verify holds the global stage toggles and the per-stage timeout. Strict is the
+// repo-wide default for strict mode (see StrictFor), which asks each adapter to
+// promote its most lenient diagnostics — analyzer infos, linter warnings — to
+// failures instead of leaving them advisory.
 type Verify struct {
 	Format    Step   `yaml:"format"`
 	Lint      Step   `yaml:"lint"`
 	Typecheck Step   `yaml:"typecheck"`
 	Test      Step   `yaml:"test"`
 	Build     Step   `yaml:"build"`
+	Strict    bool   `yaml:"strict,omitempty"`
 	Timeout   string `yaml:"timeout,omitempty"`
 }
 
@@ -68,6 +74,17 @@ func (v Verify) StepTimeout() time.Duration {
 		return 0
 	}
 	return d
+}
+
+// StrictFor reports the effective strictness for a language: the per-language
+// override (languages.<name>.strict) when set, otherwise the repo-wide default
+// (verify.strict). It is the single resolution point so the CLI never has to
+// re-derive the inherit-vs-override precedence.
+func (c *Config) StrictFor(lang string) bool {
+	if l, ok := c.Languages[lang]; ok && l.Strict != nil {
+		return *l.Strict
+	}
+	return c.Verify.Strict
 }
 
 // Commits configures convention validation.

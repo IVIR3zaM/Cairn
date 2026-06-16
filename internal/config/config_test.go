@@ -121,6 +121,39 @@ func TestVerifyTimeout(t *testing.T) {
 	}
 }
 
+// StrictFor resolves the per-language override against the repo-wide default:
+// an explicit languages.<name>.strict wins (either direction), absent inherits.
+func TestStrictFor(t *testing.T) {
+	body := "version: \"1\"\n" +
+		"verify:\n  strict: true\n" +
+		"languages:\n" +
+		"  go:\n    enabled: true\n" + // inherits verify.strict (true)
+		"  dart:\n    enabled: true\n    strict: false\n" + // overrides down to false
+		"  rust:\n    enabled: true\n    strict: true\n"
+	cfg, err := Load(writeConfig(t, body))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	for _, tc := range []struct {
+		lang string
+		want bool
+	}{
+		{"go", true},     // no per-language key → inherits verify.strict=true
+		{"dart", false},  // explicit override beats the true default
+		{"rust", true},   // explicit override agreeing with the default
+		{"python", true}, // undeclared language still inherits verify.strict
+	} {
+		if got := cfg.StrictFor(tc.lang); got != tc.want {
+			t.Errorf("StrictFor(%q) = %v, want %v", tc.lang, got, tc.want)
+		}
+	}
+
+	// The repo-wide default is false, so an undeclared language is relaxed.
+	if Default().StrictFor("go") {
+		t.Error("default StrictFor should be false")
+	}
+}
+
 // LoadOrDefault returns the in-code defaults (no error) when the file is absent.
 func TestLoadOrDefault_MissingFile(t *testing.T) {
 	cfg, err := LoadOrDefault(filepath.Join(t.TempDir(), "nope.yaml"))

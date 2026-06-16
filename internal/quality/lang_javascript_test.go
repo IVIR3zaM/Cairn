@@ -1,6 +1,7 @@
 package quality
 
 import (
+	"context"
 	"testing"
 
 	"github.com/IVIR3zaM/Cairn/internal/runner"
@@ -88,6 +89,34 @@ func TestJSExitCodeDrivesResult(t *testing.T) {
 	}
 	if len(testFail.Calls) != 1 || testFail.Calls[0].Name != "npm" || firstArg(testFail) != "test" {
 		t.Errorf("test stage should run `npm test`, got %+v", testFail.Calls)
+	}
+}
+
+// Strict mode promotes lint warnings to failures: eslint exits 0 on warnings by
+// default, so strict adds --max-warnings=0; biome adds --error-on-warnings. Relaxed
+// runs neither flag.
+func TestJSLintStrictPromotesWarnings(t *testing.T) {
+	cases := []struct {
+		standard string
+		flag     string
+	}{
+		{"eslint", "--max-warnings=0"},
+		{"biome", "--error-on-warnings"},
+	}
+	for _, c := range cases {
+		strict := &runner.Fake{}
+		stepOfWithStandard("javascript", c.standard, strict, Lint).
+			Run(context.Background(), LangUnit{Dir: ".", Strict: true}, ModeCheck)
+		if !contains(strict.Calls[0].Args, c.flag) {
+			t.Errorf("%s strict lint should include %q, got %v", c.standard, c.flag, strict.Calls[0].Args)
+		}
+
+		relaxed := &runner.Fake{}
+		stepOfWithStandard("javascript", c.standard, relaxed, Lint).
+			Run(context.Background(), LangUnit{Dir: "."}, ModeCheck)
+		if contains(relaxed.Calls[0].Args, c.flag) {
+			t.Errorf("%s relaxed lint should omit %q, got %v", c.standard, c.flag, relaxed.Calls[0].Args)
+		}
 	}
 }
 

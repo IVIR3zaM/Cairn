@@ -180,7 +180,7 @@ func newVerifyCmd() *cobra.Command {
 				results := quality.Run(context.Background(), cfg.Verify, adapter,
 					// Force tool color only when streaming to a color TTY (verbose); piped or
 					// NO_COLOR runs stay clean so captured output never carries escape codes.
-					quality.LangUnit{Name: lang.Name, Dir: lang.Dir, Color: verbose && opts.Color},
+					quality.LangUnit{Name: lang.Name, Dir: lang.Dir, Color: verbose && opts.Color, Strict: cfg.StrictFor(lang.Name)},
 					toolInfo(lang), obs)
 				all = append(all, results...)
 			}

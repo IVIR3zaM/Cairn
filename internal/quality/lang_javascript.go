@@ -52,8 +52,14 @@ func jsPrettierFormat(ctx context.Context, run runner.ToolRunner, unit LangUnit,
 func jsColor(unit LangUnit) []string { return colorEnv(unit, "FORCE_COLOR=1") }
 
 // jsEslintLint runs eslint; any reported error fails the stage via its exit code.
+// eslint exits 0 on warnings by default, so strict mode adds --max-warnings=0 to
+// make a single warning fail the stage.
 func jsEslintLint(ctx context.Context, run runner.ToolRunner, unit LangUnit, _ Mode) StepResult {
-	res, err := run.Run(ctx, runner.Command{Name: "npx", Args: []string{"eslint", "."}, Dir: unit.Dir, Env: jsColor(unit)})
+	args := []string{"eslint", "."}
+	if unit.Strict {
+		args = append(args, "--max-warnings=0")
+	}
+	res, err := run.Run(ctx, runner.Command{Name: "npx", Args: args, Dir: unit.Dir, Env: jsColor(unit)})
 	return passOrFail(res, err)
 }
 
@@ -69,8 +75,14 @@ func jsBiomeFormat(ctx context.Context, run runner.ToolRunner, unit LangUnit, mo
 }
 
 // jsBiomeLint runs biome's linter; a non-zero exit (issues found) fails the stage.
+// biome exits 0 when only warnings are present, so strict mode adds --error-on-warnings
+// to fail on them too.
 func jsBiomeLint(ctx context.Context, run runner.ToolRunner, unit LangUnit, _ Mode) StepResult {
-	res, err := run.Run(ctx, runner.Command{Name: "npx", Args: []string{"@biomejs/biome", "lint", "."}, Dir: unit.Dir, Env: jsColor(unit)})
+	args := []string{"@biomejs/biome", "lint", "."}
+	if unit.Strict {
+		args = append(args, "--error-on-warnings")
+	}
+	res, err := run.Run(ctx, runner.Command{Name: "npx", Args: args, Dir: unit.Dir, Env: jsColor(unit)})
 	return passOrFail(res, err)
 }
 

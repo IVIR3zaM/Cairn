@@ -17,7 +17,11 @@ languages:
     dir: "py"
     enabled: true
     standard: ruff             # ruff | black+flake8
-  # java | ts | rust | dart blocks look the same (dir, enabled, optional standard)
+  dart:
+    dir: "."
+    enabled: true
+    strict: true               # per-language override of verify.strict; omit to inherit
+  # java | ts | rust blocks look the same (dir, enabled, optional standard/strict)
 
 # The unified gate. Each step: enabled + required (hard-fail vs warn+skip when the tool
 # is missing). `mode: check` means non-mutating (used in hooks/CI).
@@ -27,6 +31,11 @@ verify:
   typecheck: { enabled: true,  required: false }
   test:      { enabled: true,  required: true }
   build:     { enabled: false }
+  # strict: promote the most lenient diagnostics to failures wherever the linter
+  # has a warning/info tier — dart `analyze --fatal-infos`, eslint `--max-warnings=0`,
+  # biome `--error-on-warnings`. The repo-wide default; override per language above.
+  # Linters that already fail on every finding (go, rust, python, java) are unaffected.
+  strict: false
 
 commits:
   convention: conventional     # conventional | gitmoji | none

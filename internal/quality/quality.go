@@ -65,10 +65,15 @@ const (
 // LangUnit is the language instance under verification. Color asks adapters to force
 // their tools' colored output (set by the CLI for a verbose run on a color TTY); the
 // per-tool knob that honors it lives in each lang_<name>.go, not in the gate core.
+// Strict asks adapters to run their tools at maximum severity — promoting analyzer
+// infos / linter warnings to failures — where the toolchain offers such a switch;
+// like Color, the per-tool flag lives in each lang_<name>.go. The gate core resolves
+// neither knob, it only carries them.
 type LangUnit struct {
-	Name  string
-	Dir   string
-	Color bool
+	Name   string
+	Dir    string
+	Color  bool
+	Strict bool
 }
 
 // StepResult is what a single Step.Run reports.

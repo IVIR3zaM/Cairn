@@ -31,9 +31,15 @@ func dartFormat(ctx context.Context, run runner.ToolRunner, unit LangUnit, mode 
 	return passOrFail(res, err)
 }
 
-// dartLint runs the static analyzer; any diagnostic fails the stage.
+// dartLint runs the static analyzer. Plain `dart analyze` already fails on warnings
+// and errors but exits 0 on info-level lints (e.g. very_good_analysis style rules);
+// strict mode adds --fatal-infos so those infos fail the stage too.
 func dartLint(ctx context.Context, run runner.ToolRunner, unit LangUnit, _ Mode) StepResult {
-	res, err := run.Run(ctx, runner.Command{Name: "dart", Args: []string{"analyze"}, Dir: unit.Dir})
+	args := []string{"analyze"}
+	if unit.Strict {
+		args = append(args, "--fatal-infos")
+	}
+	res, err := run.Run(ctx, runner.Command{Name: "dart", Args: args, Dir: unit.Dir})
 	return passOrFail(res, err)
 }
 

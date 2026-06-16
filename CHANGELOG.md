@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Strict mode for the quality gate: `verify.strict` (repo-wide) and per-language
+  `languages.<name>.strict` (which overrides it) promote a linter's most lenient
+  diagnostics to hard failures wherever the toolchain has such a tier — `dart analyze
+  --fatal-infos`, eslint `--max-warnings=0`, biome `--error-on-warnings`. Linters that
+  already fail on every finding (go, rust, python, java) are unaffected. Defaults to off.
 - Versioning context (`internal/version`): SemVer parse/compare and `Next(major|minor|patch)`,
   plus a CalVer next-date helper. `cairn verify` now runs the non-mutating `version_sync`
   doc-honesty check — every configured `{VERSION}` pattern must quote

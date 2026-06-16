@@ -67,6 +67,22 @@ func TestDartTestSkipsWithoutTestDir(t *testing.T) {
 	}
 }
 
+// Strict mode promotes analyzer infos to failures via --fatal-infos; relaxed runs
+// plain `dart analyze`, so an info-only diagnostic does not fail the lint stage.
+func TestDartLintStrictAddsFatalInfos(t *testing.T) {
+	strict := &runner.Fake{}
+	stepOf("dart", strict, Lint).Run(context.Background(), LangUnit{Dir: ".", Strict: true}, ModeCheck)
+	if len(strict.Calls) != 1 || len(strict.Calls[0].Args) != 2 || strict.Calls[0].Args[1] != "--fatal-infos" {
+		t.Errorf("strict lint should call dart analyze --fatal-infos, got %+v", strict.Calls)
+	}
+
+	relaxed := &runner.Fake{}
+	stepOf("dart", relaxed, Lint).Run(context.Background(), LangUnit{Dir: "."}, ModeCheck)
+	if len(relaxed.Calls) != 1 || len(relaxed.Calls[0].Args) != 1 || relaxed.Calls[0].Args[0] != "analyze" {
+		t.Errorf("relaxed lint should call bare dart analyze, got %+v", relaxed.Calls)
+	}
+}
+
 // Every stage gates on the single `dart` tool, matching detection.
 func TestDartStepToolsMatchDetection(t *testing.T) {
 	for _, k := range []Kind{Format, Lint, Test} {

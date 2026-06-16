@@ -61,6 +61,7 @@ project:
 languages:                        # auto-detected; user-editable
   go:     { dir: ".",  enabled: true }
   python: { dir: "py", enabled: true, standard: ruff }   # ruff | black+flake8
+  dart:   { dir: ".",  enabled: true, strict: true }     # override verify.strict per language
 
 verify:                           # global toggles; per-language override allowed
   format:    { enabled: true,  required: true,  mode: check }
@@ -68,6 +69,9 @@ verify:                           # global toggles; per-language override allowe
   typecheck: { enabled: true,  required: false }
   test:      { enabled: true,  required: true }
   build:     { enabled: false }
+  strict:    false                # warnings/infos fatal where the linter has the tier
+                                  # (dart --fatal-infos, eslint --max-warnings=0, biome
+                                  # --error-on-warnings); repo default, override per language
 
 commits:
   convention: conventional        # conventional | gitmoji | none
