@@ -93,17 +93,31 @@ non-interactive — no fabricated plugin goals (an early `spotless:check` hung).
 **Steps:** `internal/quality/lang_dart.go` wrapping `dart format`/`dart analyze`/`dart test`.
 **Acceptance:** Green + failing fixtures pass/fail.
 
-## [ ] 6 — Versioning + doc honesty + `bump`
-**Goal:** `cairn bump` and the version_sync honesty check (Cairn's signature).
-**Read:** AGENTS.md · docs/ARCHITECTURE.md (Versioning, data flow, extension points) · internal/{config,report}
-**Steps:** SemVer (+CalVer) math; per-manifest `VersionManager` as a **self-registering
-registry** (`internal/version/manifest_<name>.go`, `register`/`ManagerFor`, panic on dup),
-each delegating to native tooling where it exists else safe regex — no central manifest
-map; version_sync rewrite + a non-mutating honesty assertion wired into `verify`; `cairn
-bump` prints suggested commit/tag, never commits.
-**Acceptance:** `bump` updates manifests + doc patterns; `verify` fails on drifted docs;
-downgrade and empty-version cases are guarded. Tests cover the math + sync; adding a
-manifest is one self-registering file (no engine edits).
+## 6 — Versioning + doc honesty + `bump` (split)
+**Goal:** `cairn bump` and the version_sync honesty check (Cairn's signature). Split below
+so each slice lands cleanly: 6a is the read-only honesty check end-to-end; 6b adds the
+manifest writers and the mutating `bump`.
+
+### [x] 6a — SemVer/CalVer math + version_sync honesty check (wired into `verify`)
+**Read:** AGENTS.md · docs/ARCHITECTURE.md (Versioning, data flow) · internal/{config,report} · internal/cli/verify.go
+**Steps:** `internal/version/version.go` — parse/compare a version, `Next(level)` for
+major/minor/patch (SemVer) and a CalVer next-date; guard empty/downgrade at the math layer.
+`internal/version/sync.go` — compile each `{VERSION}` pattern to a regex, and a
+non-mutating `Check(fsys, canonical, files)` reporting per-file drift/missing. Wire the
+honesty check into `cairn verify` as extra report steps after the language stages, so a
+drifted doc fails verify.
+**Acceptance:** version parse/compare/`Next` + sync drift are tested; `verify` fails on a
+drifted doc and passes when honest; no `version_sync` / empty canonical ⇒ no-op (no steps).
+
+### [ ] 6b — VersionManager registry + manifests + version_sync rewrite + `cairn bump`
+**Read:** AGENTS.md · docs/ARCHITECTURE.md (Versioning, extension points) · internal/version · internal/{config,report,cli}
+**Steps:** per-manifest `VersionManager` as a **self-registering registry**
+(`internal/version/manifest_<name>.go`, `register`/`ManagerFor`, panic on dup), each
+delegating to native tooling where it exists else safe regex — no central manifest map;
+version_sync rewrite (mutating); `cairn bump <level|version>` computes next, updates
+manifests + doc patterns, prints suggested commit/tag, never commits; downgrade rejected.
+**Acceptance:** `bump` updates manifests + doc patterns; downgrade and empty-version cases
+are guarded; adding a manifest is one self-registering file (no engine edits).
 
 ## [ ] 7 — Changelog (Keep a Changelog)
 **Goal:** Promote `[Unreleased]` → version+date with refreshed compare links on `bump`.

@@ -15,6 +15,7 @@ import (
 	"github.com/IVIR3zaM/Cairn/internal/quality"
 	"github.com/IVIR3zaM/Cairn/internal/report"
 	"github.com/IVIR3zaM/Cairn/internal/runner"
+	versioning "github.com/IVIR3zaM/Cairn/internal/version"
 	"github.com/spf13/cobra"
 )
 
@@ -184,9 +185,17 @@ func newVerifyCmd() *cobra.Command {
 				all = append(all, results...)
 			}
 
+			// version_sync honesty check (Cairn's signature): every documented version must
+			// quote the canonical one. A drift fails verify just like a quality stage.
+			syncFailed, err := checkVersionSync(wd, cfg, rep, obs)
+			if err != nil {
+				rep.Error(err)
+				return err
+			}
+
 			rep.Summary(obs.steps)
 
-			if quality.Failed(all) {
+			if quality.Failed(all) || syncFailed {
 				return errVerifyFailed
 			}
 			return nil
@@ -195,6 +204,32 @@ func newVerifyCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "only print the summary")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "show full tool output")
 	return cmd
+}
+
+// checkVersionSync runs the non-mutating doc-honesty assertion and renders it as one
+// report step appended after the language stages. It returns whether any doc drifted (so
+// verify exits non-zero) and surfaces config/read errors. With no version_sync configured
+// it adds no step at all, keeping the summary clean for projects that don't use it.
+func checkVersionSync(wd string, cfg *config.Config, rep report.Reporter, obs *liveObserver) (bool, error) {
+	if len(cfg.VersionSync.Files) == 0 || cfg.Project.CanonicalVersion == "" {
+		return false, nil
+	}
+	drifts, err := versioning.Check(os.DirFS(wd), cfg.Project.CanonicalVersion, cfg.VersionSync.Files)
+	if err != nil {
+		return false, err
+	}
+	step := report.Step{Name: "version-sync", Status: report.Pass}
+	if len(drifts) > 0 {
+		reasons := make([]string, len(drifts))
+		for i, d := range drifts {
+			reasons[i] = d.Reason()
+		}
+		step.Status = report.Fail
+		step.Detail = strings.Join(reasons, "\n")
+	}
+	rep.Step(step)
+	obs.steps = append(obs.steps, step)
+	return step.Status == report.Fail, nil
 }
 
 // toolInfo turns a detected language's tool statuses into the gate's lookup map.

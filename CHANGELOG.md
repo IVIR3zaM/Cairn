@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Versioning context (`internal/version`): SemVer parse/compare and `Next(major|minor|patch)`,
+  plus a CalVer next-date helper. `cairn verify` now runs the non-mutating `version_sync`
+  doc-honesty check — every configured `{VERSION}` pattern must quote
+  `project.canonical_version`, and a drifted or missing pattern fails verify with a compact
+  per-file reason.
+
 ### Fixed
 - Dart pub workspaces (Dart 3.6+) are now verified per member package instead of once at
   the aggregator root: detection recognizes a `workspace:` pubspec as an aggregator that
