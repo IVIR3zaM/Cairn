@@ -93,6 +93,49 @@ func TestDetect_SingleRootCollapsesSubmodules(t *testing.T) {
 	}
 }
 
+// dartDirs returns the detected Dart units' dirs in result order (sorted by dir).
+func dartDirs(r *Result) []string {
+	var dirs []string
+	for _, l := range r.Languages {
+		if l.Name == "dart" {
+			dirs = append(dirs, l.Dir)
+		}
+	}
+	return dirs
+}
+
+// A Dart pub workspace root aggregates its members and owns no code; detection drops the
+// `workspace:` root and keeps each member package as its own unit (the mirror of the
+// single-root collapse, which instead keeps the root).
+func TestDetect_DartWorkspaceDefersToMembers(t *testing.T) {
+	fsys := fstest.MapFS{
+		"pubspec.yaml":            {Data: []byte("name: _ws\nworkspace:\n  - packages/a\n  - packages/b\n")},
+		"packages/a/pubspec.yaml": {Data: []byte("name: a\nresolution: workspace\n")},
+		"packages/b/pubspec.yaml": {Data: []byte("name: b\nresolution: workspace\n")},
+	}
+	res, err := Detect(fsys, allMissing)
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	if got := dartDirs(res); len(got) != 2 || got[0] != "packages/a" || got[1] != "packages/b" {
+		t.Errorf("dart units = %v, want [packages/a packages/b] (aggregator root dropped)", got)
+	}
+}
+
+// A lone workspace manifest with no detected members is still a unit: dropping it would
+// leave the language entirely undetected, so the aggregator collapse only fires when
+// members actually exist beneath it.
+func TestDetect_DartWorkspaceWithoutMembersKept(t *testing.T) {
+	fsys := fstest.MapFS{"pubspec.yaml": {Data: []byte("name: solo\nworkspace:\n")}}
+	res, err := Detect(fsys, allMissing)
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	if got := dartDirs(res); len(got) != 1 || got[0] != "." {
+		t.Errorf("dart units = %v, want [.] (no members to defer to)", got)
+	}
+}
+
 // Tool resolution reflects what the lookup reports, and each tool is looked up once.
 func TestDetect_ToolInstalledStatus(t *testing.T) {
 	var calls int

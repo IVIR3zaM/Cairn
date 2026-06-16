@@ -33,6 +33,12 @@ type langSpec struct {
 	// submodules of that build, not independent units, so detection collapses them to
 	// the outermost dir and the tool's own reactor builds the rest.
 	singleRoot bool
+	// workspace, when set, inspects a candidate manifest and reports whether it is an
+	// aggregator root (e.g. a Dart pub workspace's `workspace:` pubspec) that owns no code
+	// of its own. Such a root defers to the member units nested beneath it: detection drops
+	// the aggregator and keeps the members, so each is verified in its own dir. It is the
+	// mirror of singleRoot, which instead collapses members into the root.
+	workspace func(manifest []byte) bool
 }
 
 // registry is built at init time from each language's register() call; it is the

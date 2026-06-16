@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Dart pub workspaces (Dart 3.6+) are now verified per member package instead of once at
+  the aggregator root: detection recognizes a `workspace:` pubspec as an aggregator that
+  owns no code and defers to the member packages nested beneath it, so `verify` runs
+  format/lint/test in each member's own directory (with the dir shown in each step label)
+  rather than recursing from the root — which duplicated work and ran `dart test` at a
+  level with no tests. Generalized as a `workspace` predicate on a language spec (the
+  mirror of `singleRoot`), so any language can opt in by dropping one self-registered file.
+- `dart · test` no longer fails a Dart package that simply has no tests: `dart test`
+  treats a missing default `test/` directory as a usage error (non-zero exit), so the
+  adapter now skips the stage (⊘) when `test/` is absent instead of reporting a failure.
 - Multi-module Maven/Gradle projects no longer run (and hang) once per submodule:
   detection now collapses a single-root build tool's nested manifests to the outermost
   reactor root, so `cairn verify` builds the whole project once where the build tool's

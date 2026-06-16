@@ -2,6 +2,8 @@ package quality
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 
 	"github.com/IVIR3zaM/Cairn/internal/runner"
 )
@@ -35,7 +37,13 @@ func dartLint(ctx context.Context, run runner.ToolRunner, unit LangUnit, _ Mode)
 	return passOrFail(res, err)
 }
 
+// dartTest runs the package's tests, but only when a `test/` directory exists: `dart test`
+// treats a missing default test dir as a usage error (non-zero exit), which would wrongly
+// fail libraries that simply have no tests yet. Such a package is skipped, not failed.
 func dartTest(ctx context.Context, run runner.ToolRunner, unit LangUnit, _ Mode) StepResult {
+	if info, err := os.Stat(filepath.Join(unit.Dir, "test")); err != nil || !info.IsDir() {
+		return StepResult{Status: StatusSkip, Detail: "no test/ directory"}
+	}
 	args := []string{"test"}
 	if unit.Color {
 		args = append(args, "--color") // package:test forces color even when piped

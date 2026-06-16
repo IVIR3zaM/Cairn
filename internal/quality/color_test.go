@@ -36,14 +36,15 @@ func TestColorReachesToolInvocation(t *testing.T) {
 		t.Errorf("rust color: want CARGO_TERM_COLOR=always in env, got %v", rust.Calls[0].Env)
 	}
 
+	pkg := dartPkg(t) // a test/ dir so the test stage runs instead of skipping
 	dartOn := &runner.Fake{}
-	stepOf("dart", dartOn, Test).Run(context.Background(), LangUnit{Dir: ".", Color: true}, ModeCheck)
+	stepOf("dart", dartOn, Test).Run(context.Background(), LangUnit{Dir: pkg, Color: true}, ModeCheck)
 	if !slices.Contains(dartOn.Calls[0].Args, "--color") {
 		t.Errorf("dart color: want --color in args, got %v", dartOn.Calls[0].Args)
 	}
 
 	plain := &runner.Fake{}
-	stepOf("dart", plain, Test).Run(context.Background(), LangUnit{Dir: "."}, ModeCheck)
+	stepOf("dart", plain, Test).Run(context.Background(), LangUnit{Dir: pkg}, ModeCheck)
 	if plain.Calls[0].Env != nil || slices.Contains(plain.Calls[0].Args, "--color") {
 		t.Errorf("no color: dart should add no knob, got args=%v env=%v", plain.Calls[0].Args, plain.Calls[0].Env)
 	}

@@ -44,6 +44,7 @@ type Result struct {
 func Detect(fsys fs.FS, look LookupFunc) (*Result, error) {
 	type key struct{ name, dir string }
 	pmByUnit := map[key]string{}
+	aggregator := map[key]bool{} // workspace/aggregator roots that defer to their members
 
 	err := fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -63,6 +64,11 @@ func Detect(fsys fs.FS, look LookupFunc) (*Result, error) {
 				k := key{spec.name, path.Dir(p)}
 				if _, seen := pmByUnit[k]; !seen {
 					pmByUnit[k] = m.pm
+				}
+				if spec.workspace != nil {
+					if content, rerr := fs.ReadFile(fsys, p); rerr == nil && spec.workspace(content) {
+						aggregator[k] = true
+					}
 				}
 			}
 		}
@@ -99,12 +105,28 @@ func Detect(fsys fs.FS, look LookupFunc) (*Result, error) {
 		return false
 	}
 
+	// hasMemberUnit reports whether another same-language unit is nested beneath dir —
+	// i.e. dir is an aggregator root with real member packages under it.
+	hasMemberUnit := func(name, dir string) bool {
+		for kk := range pmByUnit {
+			if kk.name == name && kk.dir != dir && isUnder(kk.dir, dir) {
+				return true
+			}
+		}
+		return false
+	}
+
 	langs := make([]Language, 0, len(pmByUnit))
 	for k, pm := range pmByUnit {
 		spec := specByName[k.name]
 		// For single-root build tools, a nested manifest is a submodule of an ancestor
 		// unit's reactor, not its own unit — skip it so the build runs once at the root.
 		if spec.singleRoot && nestedUnit(k.name, k.dir) {
+			continue
+		}
+		// An aggregator root (e.g. a Dart pub workspace) owns no code itself; drop it when
+		// its member packages were detected so each member is verified in its own dir.
+		if aggregator[k] && hasMemberUnit(k.name, k.dir) {
 			continue
 		}
 		tools := make([]ToolStatus, 0, len(spec.tools))
