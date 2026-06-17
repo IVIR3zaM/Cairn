@@ -49,7 +49,7 @@ func TestRunBumpUpdatesAllSurfaces(t *testing.T) {
 	cfg.VersionSync.Files = []config.VersionSyncFile{{Path: "README.md", Patterns: []string{"x@{VERSION}"}}}
 
 	var out bytes.Buffer
-	if err := runBump(dir, cfg, "minor", time.Now(), &out, false); err != nil {
+	if err := runBump(dir, cfg, "minor", time.Now(), &out, false, false); err != nil {
 		t.Fatalf("runBump: %v", err)
 	}
 
@@ -87,7 +87,7 @@ func TestRunBumpAutoDiscoversManifests(t *testing.T) {
 	cfg.Project.CanonicalVersion = "0.1.0" // note: no cfg.Languages entries at all
 
 	var out bytes.Buffer
-	if err := runBump(dir, cfg, "minor", time.Now(), &out, false); err != nil {
+	if err := runBump(dir, cfg, "minor", time.Now(), &out, false, false); err != nil {
 		t.Fatalf("runBump: %v", err)
 	}
 	if got := read(t, crate); !strings.Contains(got, `version = "0.2.0"`) {
@@ -109,7 +109,7 @@ func TestRunBumpExplicitVersion(t *testing.T) {
 	cfg.Project.CanonicalVersion = "1.2.3"
 
 	var out bytes.Buffer
-	if err := runBump(dir, cfg, "2.0.0", time.Now(), &out, false); err != nil {
+	if err := runBump(dir, cfg, "2.0.0", time.Now(), &out, false, false); err != nil {
 		t.Fatalf("runBump: %v", err)
 	}
 	if got := read(t, filepath.Join(dir, "cairn.yaml")); !strings.Contains(got, "canonical_version: 2.0.0") {
@@ -122,18 +122,50 @@ func TestRunBumpExplicitVersion(t *testing.T) {
 func TestRunBumpGuards(t *testing.T) {
 	t.Run("empty canonical", func(t *testing.T) {
 		cfg := config.Default() // CanonicalVersion is ""
-		if err := runBump(t.TempDir(), cfg, "patch", time.Now(), &bytes.Buffer{}, false); err == nil {
+		if err := runBump(t.TempDir(), cfg, "patch", time.Now(), &bytes.Buffer{}, false, false); err == nil {
 			t.Fatal("want error on unset canonical")
 		}
 	})
 	t.Run("downgrade", func(t *testing.T) {
 		cfg := config.Default()
 		cfg.Project.CanonicalVersion = "2.0.0"
-		err := runBump(t.TempDir(), cfg, "1.0.0", time.Now(), &bytes.Buffer{}, false)
+		err := runBump(t.TempDir(), cfg, "1.0.0", time.Now(), &bytes.Buffer{}, false, false)
 		if err == nil || !strings.Contains(err.Error(), "not greater") {
 			t.Fatalf("want downgrade guard, got %v", err)
 		}
+		if !strings.Contains(err.Error(), "--force") {
+			t.Errorf("downgrade refusal should point at --force, got %v", err)
+		}
 	})
+}
+
+// TestRunBumpForceDowngrade proves --force is the direct-path equivalent of the wizard's
+// double-confirm: an explicit lower version that the guard would reject is applied when
+// force is set, advancing canonical backwards on purpose.
+func TestRunBumpForceDowngrade(t *testing.T) {
+	dir := t.TempDir()
+	cairn := writeFile(t, dir, "cairn.yaml", "project:\n  canonical_version: \"2.0.0\"\n")
+	cfg := config.Default()
+	cfg.Project.CanonicalVersion = "2.0.0"
+
+	var out bytes.Buffer
+	if err := runBump(dir, cfg, "1.0.0", time.Now(), &out, false, true); err != nil {
+		t.Fatalf("forced downgrade: %v", err)
+	}
+	if got := read(t, cairn); !strings.Contains(got, `canonical_version: "1.0.0"`) {
+		t.Errorf("forced downgrade not applied: %s", got)
+	}
+}
+
+// TestRunBumpForceRejectsSame confirms --force still refuses a no-op: forcing the current
+// version has nothing to apply, so it errors rather than silently doing nothing.
+func TestRunBumpForceRejectsSame(t *testing.T) {
+	cfg := config.Default()
+	cfg.Project.CanonicalVersion = "2.0.0"
+	err := runBump(t.TempDir(), cfg, "2.0.0", time.Now(), &bytes.Buffer{}, false, true)
+	if err == nil || !strings.Contains(err.Error(), "same") {
+		t.Fatalf("want same-version refusal even with force, got %v", err)
+	}
 }
 
 // TestReleaseCommitMessage pins the suggested release subject to the configured commit
@@ -247,7 +279,7 @@ func TestComputeNextCalVer(t *testing.T) {
 	cfg.Project.CanonicalVersion = "2024.1.0"
 	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 
-	_, next, err := computeNext(cfg, "patch", now)
+	_, next, err := computeNext(cfg, "patch", now, false)
 	if err != nil {
 		t.Fatal(err)
 	}

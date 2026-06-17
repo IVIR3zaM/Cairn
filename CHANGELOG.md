@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `cairn bump <version> --force` (`-f`) allows a deliberate **downgrade** on the direct,
+  non-interactive path — the equivalent of the wizard's double-confirm. Without it, a direct
+  bump still refuses to go backwards, and the refusal now points at `--force`. A no-op (the
+  current version) is refused even with `--force`, since there is nothing to apply.
 - Language-agnostic **multi-package workspace** support for `bump`/`verify`, plus the Dart
   `pubspec.yaml` writer as its first participant. A manifest manager may now opt into the
   self-registering `version.Workspace` capability (`PackageID`/`SetSiblings`/`CheckSiblings`);

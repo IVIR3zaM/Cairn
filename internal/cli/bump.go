@@ -24,7 +24,8 @@ import (
 var canonicalRe = regexp.MustCompile(`(canonical_version:\s*"?)(v?\d+\.\d+\.\d+)("?)`)
 
 func newBumpCmd() *cobra.Command {
-	return &cobra.Command{
+	var force bool
+	cmd := &cobra.Command{
 		Use:   "bump [level|version]",
 		Short: "Bump the version (interactive wizard, or pass a level/version), updating manifests + docs",
 		Long: "Bump computes the next version from project.canonical_version and applies it: " +
@@ -32,7 +33,9 @@ func newBumpCmd() *cobra.Command {
 			"version-sync doc patterns, and updates canonical_version in cairn.yaml. Run it with " +
 			"no argument for a guided, colorful wizard (patch/minor/major/custom with a " +
 			"downgrade safeguard), or pass a level (major|minor|patch) or an explicit X.Y.Z to " +
-			"apply directly. It prints a suggested commit and tag but never commits.",
+			"apply directly. A direct bump refuses to go backwards; pass --force to allow an " +
+			"explicit downgrade (the wizard double-confirms one instead). It prints a suggested " +
+			"commit and tag but never commits.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			wd, err := os.Getwd()
@@ -46,7 +49,7 @@ func newBumpCmd() *cobra.Command {
 			out := cmd.OutOrStdout()
 			color := report.Detect(out, false, false).Color
 			if len(args) == 1 {
-				return runBump(wd, cfg, args[0], time.Now(), out, color)
+				return runBump(wd, cfg, args[0], time.Now(), out, color, force)
 			}
 			in := cmd.InOrStdin()
 			if !canPrompt(in) {
@@ -55,13 +58,17 @@ func newBumpCmd() *cobra.Command {
 			return runBumpWizard(wd, cfg, in, out, color)
 		},
 	}
+	cmd.Flags().BoolVarP(&force, "force", "f", false, "allow an explicit downgrade in a direct (non-interactive) bump")
+	return cmd
 }
 
 // runBump applies a non-interactive bump from arg (a level or explicit version), guarding
-// an unset canonical and a non-increase before touching anything. It leaves I/O at the
-// edges so tests drive it on a temp tree; the wizard shares the same applyBump core.
-func runBump(wd string, cfg *config.Config, arg string, now time.Time, out io.Writer, color bool) error {
-	cur, next, err := computeNext(cfg, arg, now)
+// an unset canonical and a non-increase before touching anything. force lifts only the
+// downgrade guard, the same escape hatch the wizard offers via its double-confirm. It
+// leaves I/O at the edges so tests drive it on a temp tree; the wizard shares the same
+// applyBump core.
+func runBump(wd string, cfg *config.Config, arg string, now time.Time, out io.Writer, color, force bool) error {
+	cur, next, err := computeNext(cfg, arg, now, force)
 	if err != nil {
 		return err
 	}
@@ -240,7 +247,9 @@ func releaseCommitMessage(convention, ver string) string {
 // explicit X.Y.Z is honored directly; otherwise the arg is a level interpreted per the
 // project's versioning scheme (semver math, or a date-based CalVer step). It guards the two
 // failure modes the math layer can't see on its own: an unset canonical and a non-increase.
-func computeNext(cfg *config.Config, arg string, now time.Time) (versioning.Version, versioning.Version, error) {
+// force lifts the downgrade guard so an operator can deliberately set a lower version; a
+// no-op (next equal to current) is still refused since there is nothing to apply.
+func computeNext(cfg *config.Config, arg string, now time.Time, force bool) (versioning.Version, versioning.Version, error) {
 	var zero versioning.Version
 	cur, err := versioning.Parse(cfg.Project.CanonicalVersion)
 	if err != nil {
@@ -259,8 +268,11 @@ func computeNext(cfg *config.Config, arg string, now time.Time) (versioning.Vers
 		}
 	}
 
-	if next.Compare(cur) <= 0 {
-		return zero, zero, fmt.Errorf("refusing to bump: next %s is not greater than current %s", next, cur)
+	if next.Compare(cur) == 0 {
+		return zero, zero, fmt.Errorf("refusing to bump: next %s is the same as current %s", next, cur)
+	}
+	if !force && next.Compare(cur) < 0 {
+		return zero, zero, fmt.Errorf("refusing to bump: next %s is not greater than current %s (pass --force to downgrade)", next, cur)
 	}
 	return cur, next, nil
 }
