@@ -219,10 +219,11 @@ func newVerifyCmd() *cobra.Command {
 // verify exits non-zero) and surfaces config/read errors. With no version_sync configured
 // it adds no step at all, keeping the summary clean for projects that don't use it.
 func checkVersionSync(wd string, cfg *config.Config, rep report.Reporter, obs *liveObserver) (bool, error) {
-	if len(cfg.VersionSync.Files) == 0 || cfg.Project.CanonicalVersion == "" {
+	if len(cfg.VersionSync.Files) == 0 {
 		return false, nil
 	}
-	drifts, err := versioning.Check(os.DirFS(wd), cfg.Project.CanonicalVersion, cfg.VersionSync.Files)
+	res := versioning.NewResolver(cfg.Project)
+	drifts, err := versioning.Check(os.DirFS(wd), res, cfg.VersionSync.Files)
 	if err != nil {
 		return false, err
 	}
@@ -254,22 +255,23 @@ func versionFixHint(canonical string) string {
 // canonical, or a repo whose languages own no writable manifest) it adds no step, keeping
 // the summary clean for projects this doesn't apply to.
 func checkManifestSync(wd string, cfg *config.Config, res *detect.Result, rep report.Reporter, obs *liveObserver) (bool, error) {
-	if cfg.Project.CanonicalVersion == "" {
-		return false, nil
+	if cfg.Project.CanonicalVersion == "" && len(cfg.Project.Packages) == 0 {
+		return false, nil // no version configured anywhere — nothing to assert
 	}
 	units := make([]versioning.ManifestUnit, 0, len(res.Languages))
 	for _, lang := range res.Languages {
 		units = append(units, versioning.ManifestUnit{Dir: lang.Dir, Manifests: lang.VersionManifests})
 	}
-	drifts, checked, err := versioning.CheckManifests(os.DirFS(wd), cfg.Project.CanonicalVersion, units)
+	resolver := versioning.NewResolver(cfg.Project)
+	drifts, checked, err := versioning.CheckManifests(os.DirFS(wd), resolver, units)
 	if err != nil {
 		return false, err
 	}
 	// Multi-package repos also carry member-to-member constraints (a workspace/reactor pinning
-	// a sibling at `^X.Y.Z`) that must track canonical — a stale pin looks honest to the
-	// per-file version: check above. The workspace pass catches it generically: any manifest
+	// a sibling at `^X.Y.Z`) that must track each member's version — a stale pin looks honest to
+	// the per-file version: check above. The workspace pass catches it generically: any manifest
 	// format that opts into version.Workspace participates, no language named here.
-	wsDrifts, err := versioning.CheckWorkspace(os.DirFS(wd), cfg.Project.CanonicalVersion, units)
+	wsDrifts, err := versioning.CheckWorkspace(os.DirFS(wd), resolver, units)
 	if err != nil {
 		return false, err
 	}

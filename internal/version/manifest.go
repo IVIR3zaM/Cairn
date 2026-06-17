@@ -72,12 +72,14 @@ type ManifestDrift struct {
 	Detail string // optional context (e.g. which sibling constraint drifted); empty for the version: field
 }
 
-// Reason renders a one-line, actionable description for the reporter.
+// Reason renders a one-line, actionable description for the reporter. A Detail (a workspace
+// sibling drift) already carries its own "want", since each sibling may target a different
+// per-package version; the plain case states the unit's own resolved target.
 func (d ManifestDrift) Reason() string {
 	if d.Detail != "" {
-		return fmt.Sprintf("%s: %s, want %s", d.Path, d.Detail, d.Want)
+		return fmt.Sprintf("%s: %s", d.Path, d.Detail)
 	}
-	return fmt.Sprintf("%s: version disagrees with canonical %s", d.Path, d.Want)
+	return fmt.Sprintf("%s: version disagrees with declared %s", d.Path, d.Want)
 }
 
 // CheckManifests is the non-mutating honesty assertion over language-owned manifests: for
@@ -85,21 +87,28 @@ func (d ManifestDrift) Reason() string {
 // any that drift. It reuses each Manager without writing: SetVersion(content, canonical)
 // reports changed=false for an honest manifest and changed=true for a drifted one. A
 // declared manifest with no registered writer, a missing file, or a present file that
-// states no locatable version is skipped (none is a *lie* about a version). It returns the
+// states no locatable version is skipped (none is a *lie* about a version). Each unit is
+// asserted against *its own* resolved target version (res maps a unit dir to it), so a
+// monorepo whose packages version independently is checked per package; lockstep is the
+// degenerate case where every unit resolves to the one canonical version. It returns the
 // drifts and how many manifests were actually examined, so the caller can omit the check
-// entirely when nothing version-bearing was found. Empty canonical or no units is a no-op.
-func CheckManifests(fsys fs.FS, canonical string, units []ManifestUnit) ([]ManifestDrift, int, error) {
-	if canonical == "" || len(units) == 0 {
+// entirely when nothing version-bearing was found. A nil resolver or no units is a no-op,
+// as is a unit with no configured version.
+func CheckManifests(fsys fs.FS, res *Resolver, units []ManifestUnit) ([]ManifestDrift, int, error) {
+	if res == nil || len(units) == 0 {
 		return nil, 0, nil
-	}
-	want, err := Parse(canonical)
-	if err != nil {
-		return nil, 0, fmt.Errorf("project.canonical_version: %w", err)
 	}
 	var drifts []ManifestDrift
 	checked := 0
 	seen := map[string]bool{} // a manifest path is checked at most once
 	for _, u := range units {
+		want, ok, err := res.targetVersion(u.Dir)
+		if err != nil {
+			return nil, 0, fmt.Errorf("version for %s: %w", u.Dir, err)
+		}
+		if !ok {
+			continue // no version configured for this unit
+		}
 		for _, fname := range u.Manifests {
 			m, ok := ManagerFor(fname)
 			if !ok {
@@ -141,27 +150,31 @@ type Workspace interface {
 	// PackageID returns the package name this manifest declares, used to recognize a sibling
 	// dependency by name; false when it declares none.
 	PackageID(content []byte) (string, bool)
-	// SetSiblings rewrites every dependency on a member (a name in members) to v, returning
-	// the result and whether it changed.
-	SetSiblings(content []byte, members map[string]bool, v Version) ([]byte, bool)
+	// SetSiblings rewrites every dependency on a member to that member's target version,
+	// returning the result and whether it changed. members maps each member name to the
+	// version it must carry, so independently-versioned packages reconcile per package.
+	SetSiblings(content []byte, members map[string]Version) ([]byte, bool)
 	// CheckSiblings reports a one-line reason for each dependency on a member that pins a
-	// version other than v.
-	CheckSiblings(content []byte, members map[string]bool, v Version) []string
+	// version other than that member's target (in members).
+	CheckSiblings(content []byte, members map[string]Version) []string
 }
 
-// wsGroup collects, per manifest format, its Workspace manager, the member names declared
-// across all its manifests, and each manifest's content keyed by repo-relative path.
+// wsGroup collects, per manifest format, its Workspace manager, each member name mapped to
+// the version it must carry (resolved per package), and each manifest's content keyed by
+// repo-relative path.
 type wsGroup struct {
 	ws      Workspace
-	members map[string]bool
+	members map[string]Version
 	files   map[string][]byte
 }
 
 // gatherWorkspaces walks units and, for every manifest whose Manager is Workspace-capable,
-// reads it through read, records its package identity, and groups it by format. read returns
-// (content, found, err); a not-found manifest is skipped. Grouping by format keeps each
-// language's members separate — a Cargo member never reconciles against a pubspec member.
-func gatherWorkspaces(units []ManifestUnit, read func(rel string) ([]byte, bool, error)) (map[string]*wsGroup, error) {
+// reads it through read, records its package identity mapped to its resolved target version,
+// and groups it by format. read returns (content, found, err); a not-found manifest is
+// skipped. Grouping by format keeps each language's members separate — a Cargo member never
+// reconciles against a pubspec member. A member whose unit has no configured version is left
+// out of the member map (nothing to reconcile it to).
+func gatherWorkspaces(units []ManifestUnit, res *Resolver, read func(rel string) ([]byte, bool, error)) (map[string]*wsGroup, error) {
 	groups := map[string]*wsGroup{}
 	for _, u := range units {
 		for _, fname := range u.Manifests {
@@ -176,7 +189,7 @@ func gatherWorkspaces(units []ManifestUnit, read func(rel string) ([]byte, bool,
 			rel := path.Join(u.Dir, fname)
 			g := groups[fname]
 			if g == nil {
-				g = &wsGroup{ws: ws, members: map[string]bool{}, files: map[string][]byte{}}
+				g = &wsGroup{ws: ws, members: map[string]Version{}, files: map[string][]byte{}}
 				groups[fname] = g
 			}
 			if _, seen := g.files[rel]; seen {
@@ -191,7 +204,13 @@ func gatherWorkspaces(units []ManifestUnit, read func(rel string) ([]byte, bool,
 			}
 			g.files[rel] = data
 			if id, ok := ws.PackageID(data); ok {
-				g.members[id] = true
+				want, vok, err := res.targetVersion(u.Dir)
+				if err != nil {
+					return nil, fmt.Errorf("version for %s: %w", u.Dir, err)
+				}
+				if vok {
+					g.members[id] = want
+				}
 			}
 		}
 	}
@@ -211,17 +230,14 @@ func sortedKeys[V any](m map[string]V) []string {
 // CheckWorkspace is the language-agnostic multi-package honesty assertion: for every detected
 // manifest whose Manager is Workspace-capable, it gathers the package identities of all
 // manifests of that format, then reports each intra-repo dependency constraint that disagrees
-// with canonical. It complements CheckManifests (each manifest's own version): a stale sibling
-// pin looks individually honest. Empty canonical or no units is a no-op.
-func CheckWorkspace(fsys fs.FS, canonical string, units []ManifestUnit) ([]ManifestDrift, error) {
-	if canonical == "" || len(units) == 0 {
+// with its target. It complements CheckManifests (each manifest's own version): a stale sibling
+// pin looks individually honest. Each member is reconciled to *its own* resolved version, so
+// independently-versioned packages are honored. A nil resolver or no units is a no-op.
+func CheckWorkspace(fsys fs.FS, res *Resolver, units []ManifestUnit) ([]ManifestDrift, error) {
+	if res == nil || len(units) == 0 {
 		return nil, nil
 	}
-	want, err := Parse(canonical)
-	if err != nil {
-		return nil, fmt.Errorf("project.canonical_version: %w", err)
-	}
-	groups, err := gatherWorkspaces(units, func(rel string) ([]byte, bool, error) {
+	groups, err := gatherWorkspaces(units, res, func(rel string) ([]byte, bool, error) {
 		data, err := fs.ReadFile(fsys, rel)
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, false, nil
@@ -235,8 +251,8 @@ func CheckWorkspace(fsys fs.FS, canonical string, units []ManifestUnit) ([]Manif
 	for _, fname := range sortedKeys(groups) {
 		g := groups[fname]
 		for _, rel := range sortedKeys(g.files) {
-			for _, reason := range g.ws.CheckSiblings(g.files[rel], g.members, want) {
-				drifts = append(drifts, ManifestDrift{Path: rel, Want: want.String(), Detail: reason})
+			for _, reason := range g.ws.CheckSiblings(g.files[rel], g.members) {
+				drifts = append(drifts, ManifestDrift{Path: rel, Detail: reason})
 			}
 		}
 	}
@@ -244,11 +260,12 @@ func CheckWorkspace(fsys fs.FS, canonical string, units []ManifestUnit) ([]Manif
 }
 
 // RewriteWorkspace is the mutating sibling of CheckWorkspace: across every Workspace-capable
-// manifest format it sets each intra-repo dependency constraint to v in lockstep, writing only
-// changed files and returning their repo-relative paths. It assumes each manifest's own
-// version: was already set by the generic manifest pass; it touches only sibling constraints.
-func RewriteWorkspace(root string, units []ManifestUnit, v Version) ([]string, error) {
-	groups, err := gatherWorkspaces(units, func(rel string) ([]byte, bool, error) {
+// manifest format it sets each intra-repo dependency constraint to the depended member's
+// resolved version, writing only changed files and returning their repo-relative paths. It
+// assumes each manifest's own version: was already set by the generic manifest pass; it
+// touches only sibling constraints.
+func RewriteWorkspace(root string, res *Resolver, units []ManifestUnit) ([]string, error) {
+	groups, err := gatherWorkspaces(units, res, func(rel string) ([]byte, bool, error) {
 		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
 		if os.IsNotExist(err) {
 			return nil, false, nil
@@ -262,7 +279,7 @@ func RewriteWorkspace(root string, units []ManifestUnit, v Version) ([]string, e
 	for _, fname := range sortedKeys(groups) {
 		g := groups[fname]
 		for _, rel := range sortedKeys(g.files) {
-			out, did := g.ws.SetSiblings(g.files[rel], g.members, v)
+			out, did := g.ws.SetSiblings(g.files[rel], g.members)
 			if !did {
 				continue
 			}

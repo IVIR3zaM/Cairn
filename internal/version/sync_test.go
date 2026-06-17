@@ -17,7 +17,7 @@ func TestCheck(t *testing.T) {
 		{Path: "README.md", Patterns: []string{"mylib:{VERSION}", "version-{VERSION}"}},
 	}
 
-	drifts, err := Check(fsys, "0.1.0", files)
+	drifts, err := Check(fsys, lockstep("0.1.0"), files)
 	if err != nil {
 		t.Fatalf("Check: %v", err)
 	}
@@ -30,13 +30,44 @@ func TestCheck(t *testing.T) {
 	}
 }
 
+// lockstep is a Resolver where every file/unit resolves to one version — the degenerate,
+// canonical-only case the version_sync tests exercise.
+func lockstep(canonical string) *Resolver {
+	return NewResolver(config.Project{CanonicalVersion: canonical, Versioning: "semver"})
+}
+
+// A version_sync doc under an independently-versioned package is checked against *that*
+// package's version, not the repo-wide canonical: the resolver maps the file by its dir.
+func TestCheckPerPackage(t *testing.T) {
+	fsys := fstest.MapFS{
+		"README.md":              {Data: []byte("repo at 1.0.0")},
+		"packages/api/README.md": {Data: []byte("api at 1.0.0")}, // drift: api is on 2.5.0
+	}
+	files := []config.VersionSyncFile{
+		{Path: "README.md", Patterns: []string{"repo at {VERSION}"}},
+		{Path: "packages/api/README.md", Patterns: []string{"api at {VERSION}"}},
+	}
+	res := NewResolver(config.Project{
+		CanonicalVersion: "1.0.0",
+		Versioning:       "semver",
+		Packages:         []config.PackageVersion{{Path: "packages/api", Version: "2.5.0"}},
+	})
+	drifts, err := Check(fsys, res, files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(drifts) != 1 || drifts[0].Path != "packages/api/README.md" || drifts[0].Want != "2.5.0" {
+		t.Fatalf("want only the api doc to drift against its own 2.5.0, got %+v", drifts)
+	}
+}
+
 func TestCheckPatternNotFound(t *testing.T) {
 	fsys := fstest.MapFS{"README.md": {Data: []byte("no version here")}}
 	files := []config.VersionSyncFile{
 		{Path: "README.md", Patterns: []string{"mylib:{VERSION}"}},
 	}
 
-	drifts, err := Check(fsys, "1.0.0", files)
+	drifts, err := Check(fsys, lockstep("1.0.0"), files)
 	if err != nil {
 		t.Fatalf("Check: %v", err)
 	}
@@ -51,7 +82,7 @@ func TestCheckHonestIsNoDrift(t *testing.T) {
 		{Path: "README.md", Patterns: []string{"{VERSION}"}},
 	}
 
-	drifts, err := Check(fsys, "1.2.3", files)
+	drifts, err := Check(fsys, lockstep("1.2.3"), files)
 	if err != nil {
 		t.Fatalf("Check: %v", err)
 	}
@@ -61,11 +92,11 @@ func TestCheckHonestIsNoDrift(t *testing.T) {
 }
 
 func TestCheckNoConfigIsNoop(t *testing.T) {
-	// Empty canonical or no files: the check costs nothing and reads nothing.
-	if d, err := Check(nil, "", nil); err != nil || d != nil {
-		t.Errorf("empty config: got %v, %v", d, err)
+	// No resolver or no files: the check costs nothing and reads nothing.
+	if d, err := Check(nil, nil, nil); err != nil || d != nil {
+		t.Errorf("nil resolver: got %v, %v", d, err)
 	}
-	if d, err := Check(nil, "1.0.0", nil); err != nil || d != nil {
+	if d, err := Check(nil, lockstep("1.0.0"), nil); err != nil || d != nil {
 		t.Errorf("no files: got %v, %v", d, err)
 	}
 }
@@ -80,7 +111,7 @@ func TestRewriteMakesDocHonest(t *testing.T) {
 		{Path: "README.md", Patterns: []string{"mylib:{VERSION}", "version-{VERSION}"}},
 	}
 
-	changed, err := Rewrite(dir, "0.1.0", files)
+	changed, err := Rewrite(dir, lockstep("0.1.0"), files)
 	if err != nil {
 		t.Fatalf("Rewrite: %v", err)
 	}
@@ -88,17 +119,17 @@ func TestRewriteMakesDocHonest(t *testing.T) {
 		t.Fatalf("changed = %v, want [README.md]", changed)
 	}
 	// The rewritten doc is now honest, and a re-run is a no-op (idempotent).
-	if drifts, _ := Check(os.DirFS(dir), "0.1.0", files); len(drifts) != 0 {
+	if drifts, _ := Check(os.DirFS(dir), lockstep("0.1.0"), files); len(drifts) != 0 {
 		t.Errorf("doc still drifts after rewrite: %v", drifts)
 	}
-	if again, _ := Rewrite(dir, "0.1.0", files); len(again) != 0 {
+	if again, _ := Rewrite(dir, lockstep("0.1.0"), files); len(again) != 0 {
 		t.Errorf("second rewrite should change nothing, got %v", again)
 	}
 }
 
 func TestCheckBadCanonical(t *testing.T) {
 	files := []config.VersionSyncFile{{Path: "README.md", Patterns: []string{"{VERSION}"}}}
-	if _, err := Check(fstest.MapFS{}, "nope", files); err == nil {
+	if _, err := Check(fstest.MapFS{}, lockstep("nope"), files); err == nil {
 		t.Error("malformed canonical version should error")
 	}
 }

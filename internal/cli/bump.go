@@ -181,13 +181,16 @@ func runBumpWizard(wd string, cfg *config.Config, in io.Reader, out io.Writer, c
 // guards happen before it is called.
 func applyBump(wd string, cfg *config.Config, cur, next versioning.Version, out io.Writer, p palette) error {
 	var changed []string
-	mans, err := updateManifests(wd, next)
+	// A repo-wide bump moves everything to one version, so every unit resolves to next: a
+	// lockstep resolver expresses that (per-package bump ergonomics arrive in 6g-iii-b).
+	res := versioning.NewResolver(config.Project{CanonicalVersion: next.String()})
+	mans, err := updateManifests(wd, next, res)
 	if err != nil {
 		return err
 	}
 	changed = append(changed, mans...)
 
-	docs, err := versioning.Rewrite(wd, next.String(), cfg.VersionSync.Files)
+	docs, err := versioning.Rewrite(wd, res, cfg.VersionSync.Files)
 	if err != nil {
 		return err
 	}
@@ -317,22 +320,22 @@ func describeJump(p palette, cur, next versioning.Version) string {
 // because the language owns it, not because a dir is listed in cairn.yaml. A declared file
 // with no writer registered yet is skipped; a missing file is skipped; a present file without
 // a locatable version errors. Returned paths are repo-relative and sorted for a clean summary.
-func updateManifests(wd string, next versioning.Version) ([]string, error) {
-	res, err := detect.Detect(os.DirFS(wd), lookupTool)
+func updateManifests(wd string, next versioning.Version, res *versioning.Resolver) ([]string, error) {
+	det, err := detect.Detect(os.DirFS(wd), lookupTool)
 	if err != nil {
 		return nil, err
 	}
 	var changed []string
 	seen := map[string]bool{}       // a manifest path is rewritten at most once
 	changedSet := map[string]bool{} // dedupe across the version: pass and the workspace pass
-	units := make([]versioning.ManifestUnit, 0, len(res.Languages))
+	units := make([]versioning.ManifestUnit, 0, len(det.Languages))
 	add := func(rel string) {
 		if !changedSet[rel] {
 			changedSet[rel] = true
 			changed = append(changed, rel)
 		}
 	}
-	for _, lang := range res.Languages {
+	for _, lang := range det.Languages {
 		units = append(units, versioning.ManifestUnit{Dir: lang.Dir, Manifests: lang.VersionManifests})
 		for _, fname := range lang.VersionManifests {
 			m, ok := versioning.ManagerFor(fname)
@@ -369,7 +372,7 @@ func updateManifests(wd string, next versioning.Version) ([]string, error) {
 	// written. Handled generically: any manifest format that opts into version.Workspace
 	// participates, identified by member name so a sibling pinned at any stale version is
 	// repaired — not only one that matched the previous version. No language named here.
-	wsChanged, err := versioning.RewriteWorkspace(wd, units, next)
+	wsChanged, err := versioning.RewriteWorkspace(wd, res, units)
 	if err != nil {
 		return changed, err
 	}

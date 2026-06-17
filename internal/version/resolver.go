@@ -66,6 +66,24 @@ func (r *Resolver) ForDir(dir string) Target {
 	return Target{Version: p.Version, Versioning: p.VersioningFor(r.scheme)}
 }
 
+// targetVersion resolves dir to its parsed target Version. ok is false when no version is
+// configured for the unit (an empty literal — e.g. a per-package repo with no canonical and
+// no covering entry), so the caller simply skips it; err is non-nil only for a present but
+// malformed version literal (a config mistake worth surfacing). It is the engine's single
+// entry point for "the version this unit must carry", so Check/CheckManifests/CheckWorkspace
+// share one resolution and one skip/error policy.
+func (r *Resolver) targetVersion(dir string) (Version, bool, error) {
+	lit := r.ForDir(dir).Version
+	if lit == "" {
+		return Version{}, false, nil
+	}
+	v, err := Parse(lit)
+	if err != nil {
+		return Version{}, false, err
+	}
+	return v, true, nil
+}
+
 // covers reports whether a package rooted at pkgPath governs unit dir: an exact match or
 // dir nested beneath pkgPath. "." covers the whole repo. The trailing-slash check stops a
 // sibling like "pkg/foobar" from being treated as nested under "pkg/foo".

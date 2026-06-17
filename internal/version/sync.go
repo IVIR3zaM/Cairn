@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -37,20 +38,26 @@ func (d Drift) Reason() string {
 
 // Check is the non-mutating honesty assertion: for each version_sync file and pattern it
 // matches {VERSION} against the file's text and reports every captured version that differs
-// from canonical, plus any pattern that never matched. It modifies nothing — 6b's rewrite
-// is what fixes the drift Check finds. An empty canonical or no files is a no-op (nil), so
-// the check costs nothing until version_sync is configured.
-func Check(fsys fs.FS, canonical string, files []config.VersionSyncFile) ([]Drift, error) {
-	if canonical == "" || len(files) == 0 {
+// from the file's target, plus any pattern that never matched. Each file is resolved to its
+// target version by its directory (res), so a doc under an independently-versioned package
+// is checked against that package's version; lockstep is the degenerate case where every
+// file resolves to canonical. It modifies nothing — Rewrite is what fixes the drift Check
+// finds. A nil resolver or no files is a no-op (nil), as is a file with no configured
+// version, so the check costs nothing until version_sync is configured.
+func Check(fsys fs.FS, res *Resolver, files []config.VersionSyncFile) ([]Drift, error) {
+	if res == nil || len(files) == 0 {
 		return nil, nil
-	}
-	want, err := Parse(canonical)
-	if err != nil {
-		return nil, fmt.Errorf("project.canonical_version: %w", err)
 	}
 
 	var drifts []Drift
 	for _, f := range files {
+		want, ok, err := res.targetVersion(path.Dir(f.Path))
+		if err != nil {
+			return nil, fmt.Errorf("version for %s: %w", f.Path, err)
+		}
+		if !ok {
+			continue
+		}
 		data, err := fs.ReadFile(fsys, f.Path)
 		if err != nil {
 			return nil, fmt.Errorf("version_sync %s: %w", f.Path, err)
@@ -80,23 +87,27 @@ func Check(fsys fs.FS, canonical string, files []config.VersionSyncFile) ([]Drif
 }
 
 // Rewrite is the mutating sibling of Check: for each version_sync file it sets every
-// {VERSION} pattern to canonical, writing the file back only when it changed. It returns
-// the paths it modified so bump can report them. Patterns that never match are left alone
-// (Check is what flags those); an empty canonical or no files is a no-op. Paths are joined
-// under root so the caller controls the working directory.
-func Rewrite(root, canonical string, files []config.VersionSyncFile) ([]string, error) {
-	if canonical == "" || len(files) == 0 {
+// {VERSION} pattern to that file's resolved target version (res, by the file's directory),
+// writing the file back only when it changed. It returns the paths it modified so bump can
+// report them. Patterns that never match are left alone (Check is what flags those); a nil
+// resolver, no files, or a file with no configured version is a no-op. Paths are joined under
+// root so the caller controls the working directory.
+func Rewrite(root string, res *Resolver, files []config.VersionSyncFile) ([]string, error) {
+	if res == nil || len(files) == 0 {
 		return nil, nil
-	}
-	want, err := Parse(canonical)
-	if err != nil {
-		return nil, fmt.Errorf("project.canonical_version: %w", err)
 	}
 
 	var changed []string
 	for _, f := range files {
-		path := filepath.Join(root, f.Path)
-		data, err := os.ReadFile(path)
+		want, ok, err := res.targetVersion(path.Dir(f.Path))
+		if err != nil {
+			return changed, fmt.Errorf("version for %s: %w", f.Path, err)
+		}
+		if !ok {
+			continue
+		}
+		full := filepath.Join(root, f.Path)
+		data, err := os.ReadFile(full)
 		if err != nil {
 			return changed, fmt.Errorf("version_sync %s: %w", f.Path, err)
 		}
@@ -107,7 +118,7 @@ func Rewrite(root, canonical string, files []config.VersionSyncFile) ([]string, 
 		if !did {
 			continue
 		}
-		if err := os.WriteFile(path, []byte(updated), 0o644); err != nil {
+		if err := os.WriteFile(full, []byte(updated), 0o644); err != nil {
 			return changed, fmt.Errorf("version_sync %s: %w", f.Path, err)
 		}
 		changed = append(changed, f.Path)

@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `cairn verify` honesty checks are now per-package: the manifest, workspace-interdependency,
+  and `version_sync` doc checks each resolve a unit (or version_sync file) to *its own* target
+  version via `version.Resolver`, so a monorepo whose packages version independently passes
+  when each manifest/doc/interdependency matches its declared version and fails on drift of any
+  one. A repo with only `canonical_version` is unchanged (lockstep). The honesty engine
+  (`Check`/`Rewrite`/`CheckManifests`/`CheckWorkspace`/`RewriteWorkspace`) now takes a
+  `*version.Resolver` and the `Workspace` member map is name→version (6g-iii-a).
 - `version.Resolver` maps a detected unit directory to its target version + scheme,
   resolving `project.packages` (most-specific path prefix wins, nested overrides ancestor)
   and falling back to `canonical_version` when no package matches — the foundation for

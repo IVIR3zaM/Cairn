@@ -45,39 +45,43 @@ func (pubspec) PackageID(content []byte) (string, bool) {
 	return string(m[1]), true
 }
 
-// SetSiblings implements Workspace: rewrite every dependency that names a member (a key in
-// members) to v, preserving an existing caret. An external dependency — whose key is not a
-// member — is left untouched, however its version happens to read.
-func (pubspec) SetSiblings(content []byte, members map[string]bool, v Version) ([]byte, bool) {
+// SetSiblings implements Workspace: rewrite every dependency that names a member to that
+// member's target version (members maps name→version), preserving an existing caret. An
+// external dependency — whose key is not a member — is left untouched, however its version
+// happens to read.
+func (pubspec) SetSiblings(content []byte, members map[string]Version) ([]byte, bool) {
 	changed := false
 	out := pubspecDep.ReplaceAllFunc(content, func(line []byte) []byte {
 		g := pubspecDep.FindSubmatch(line)
-		// Index members by string(g[1]) directly — binding it to a local first defeats the
-		// compiler's no-alloc map-key optimization (staticcheck SA6001).
-		if !members[string(g[1])] || string(g[3]) == v.String() {
+		// Look the member's target up by string(g[1]) directly — binding it to a local first
+		// defeats the compiler's no-alloc map-key optimization (staticcheck SA6001).
+		want, ok := members[string(g[1])]
+		if !ok || string(g[3]) == want.String() {
 			return line
 		}
 		changed = true
 		idx := bytes.LastIndex(line, g[3]) // swap only the version literal, keep name+caret
 		out := make([]byte, 0, len(line))
 		out = append(out, line[:idx]...)
-		out = append(out, v.String()...)
+		out = append(out, want.String()...)
 		return append(out, line[idx+len(g[3]):]...)
 	})
 	return out, changed
 }
 
 // CheckSiblings implements Workspace: report each dependency on a member that pins a version
-// other than v — drift the per-file version: check is blind to.
-func (pubspec) CheckSiblings(content []byte, members map[string]bool, v Version) []string {
+// other than that member's target — drift the per-file version: check is blind to. The reason
+// carries its own "want" since members may target different per-package versions.
+func (pubspec) CheckSiblings(content []byte, members map[string]Version) []string {
 	var reasons []string
 	for _, g := range pubspecDep.FindAllSubmatch(content, -1) {
 		name, ver := string(g[1]), string(g[3])
-		if !members[name] {
+		want, ok := members[name]
+		if !ok {
 			continue
 		}
-		if pv, err := Parse(ver); err != nil || pv.Compare(v) != 0 {
-			reasons = append(reasons, fmt.Sprintf("depends on member %s at %s", name, ver))
+		if pv, err := Parse(ver); err != nil || pv.Compare(want) != 0 {
+			reasons = append(reasons, fmt.Sprintf("depends on member %s at %s, want %s", name, ver, want))
 		}
 	}
 	return reasons

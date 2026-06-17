@@ -212,16 +212,36 @@ for nested packages.
 **Acceptance:** resolver returns the per-package version for a matching unit, canonical for an
 unmatched one, and the most-specific entry for nested paths; tested in isolation.
 
-### [ ] 6g-iii — Thread the resolver through `bump` + `verify`
-**Read:** AGENTS.md · docs/ARCHITECTURE.md (Versioning, data flow) · internal/version/{sync,manifest}.go ·
-internal/cli/{bump,verify}.go
-**Steps:** Thread the resolver through `CheckManifests`/`CheckWorkspace`/`Rewrite`/`bump` (so
-`members` becomes name→version, lockstep the degenerate case); decide bump ergonomics
-(`cairn bump <pkg> <level>` vs. repo-wide).
-**Acceptance:** a mixed-language monorepo fixture where two packages hold different versions:
-`verify` passes when each manifest/doc/interdependency matches *its* declared version and fails
-on drift of any one; `bump` advances a single package (and its dependents' constraints) without
-touching the others; a repo with only `canonical_version` behaves exactly as today.
+## 6g-iii — Thread the resolver through `bump` + `verify` (split)
+**Goal:** Make the honesty engine and CLI per-package aware via `version.Resolver`. The original
+single-run slice grew past one clean run (it migrates four engine signatures + the `Workspace`
+interface *and* adds new `bump` ergonomics), so it is split: 6g-iii-a migrates the engine to the
+resolver and makes `verify` per-package; 6g-iii-b adds per-package `bump` ergonomics.
+
+### [x] 6g-iii-a — Resolver-threaded honesty engine + per-package `verify`
+**Read:** AGENTS.md · internal/version/{sync,manifest,manifest_pubspec,resolver}.go ·
+internal/cli/{bump,verify}.go · internal/config/config.go
+**Steps:** Replace the lone `canonical string` parameter on `Check`/`Rewrite`/`CheckManifests`/
+`CheckWorkspace`/`RewriteWorkspace` with a `*version.Resolver`, resolving each unit (manifest by
+its dir, version_sync file by `path.Dir`) to *its* target version; change the `Workspace`
+interface's `members` to name→version (`map[string]Version`, drop the single `v`). Wire `verify`
+to build the resolver from `cfg.Project` (per-package honesty). Keep `bump` repo-wide for now by
+passing a lockstep resolver built from the computed `next` — behavior unchanged.
+**Acceptance:** `CheckManifests`/`CheckWorkspace`/`Check` flag drift against each unit's resolved
+version (a monorepo where two packages hold different versions passes when each manifest/doc/
+interdependency matches *its* version, fails on drift of any one); a repo with no `packages`
+behaves exactly as today (lockstep). Tested in the version package.
+
+### [ ] 6g-iii-b — Per-package `bump` ergonomics
+**Read:** AGENTS.md · docs/ARCHITECTURE.md (Versioning, data flow) · internal/version/resolver.go ·
+internal/cli/bump.go
+**Steps:** `cairn bump <pkg> <level|version>` advances a single declared package: compute its
+next from its `project.packages[].version`, update only that package's manifests + its dependents'
+constraints + its `cairn.yaml` packages entry, leaving the others. Repo-wide `cairn bump <level>`
+stays for the canonical/lockstep case. Decide wizard behavior for monorepos.
+**Acceptance:** in the mixed-language monorepo fixture, `bump <pkg>` advances one package (and its
+dependents' constraints) without touching the others; a repo with only `canonical_version` behaves
+exactly as today.
 
 ## [ ] 7 — Changelog (Keep a Changelog)
 **Goal:** Promote `[Unreleased]` → version+date with refreshed compare links on `bump`.
