@@ -165,6 +165,63 @@ func TestLoadOrDefault_MissingFile(t *testing.T) {
 	}
 }
 
+// A monorepo declares per-package versions: each entry parses, and VersioningFor resolves
+// the per-package scheme override against the project-wide default.
+func TestLoad_Packages_PerPackageVersions(t *testing.T) {
+	path := writeConfig(t, `
+version: "1"
+project:
+  canonical_version: "0.4.2"
+  versioning: semver
+  packages:
+    - { path: services/api, version: "2.1.0" }
+    - { path: pkgs/cli, version: "2025.6.0", versioning: calver }
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	pkgs := cfg.Project.Packages
+	if len(pkgs) != 2 {
+		t.Fatalf("packages = %+v", pkgs)
+	}
+	if pkgs[0].Path != "services/api" || pkgs[0].Version != "2.1.0" {
+		t.Errorf("packages[0] = %+v", pkgs[0])
+	}
+	// absent override inherits project.versioning; explicit override wins.
+	if got := pkgs[0].VersioningFor(cfg.Project.Versioning); got != "semver" {
+		t.Errorf("packages[0] scheme = %q, want semver (inherited)", got)
+	}
+	if got := pkgs[1].VersioningFor(cfg.Project.Versioning); got != "calver" {
+		t.Errorf("packages[1] scheme = %q, want calver (override)", got)
+	}
+}
+
+// Each package entry must carry a non-empty path and version, and a scheme override (if
+// given) must be a known one — all reported in one actionable error.
+func TestLoad_Packages_InvalidEntries(t *testing.T) {
+	path := writeConfig(t, `
+version: "1"
+project:
+  packages:
+    - { path: "", version: "" }
+    - { path: pkgs/cli, version: "1.0.0", versioning: weekly }
+`)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected error for invalid package entries")
+	}
+	msg := err.Error()
+	for _, want := range []string{
+		"project.packages[0].path", "project.packages[0].version",
+		"project.packages[1].versioning", "weekly",
+	} {
+		if !contains(msg, want) {
+			t.Errorf("error %q missing %q", msg, want)
+		}
+	}
+}
+
 func contains(s, sub string) bool {
 	for i := 0; i+len(sub) <= len(s); i++ {
 		if s[i:i+len(sub)] == sub {

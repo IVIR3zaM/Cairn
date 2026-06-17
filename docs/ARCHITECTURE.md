@@ -57,6 +57,10 @@ version: "1"
 project:
   canonical_version: "0.1.0"     # source of truth for version-sync
   versioning: semver             # semver | calver
+  packages:                       # optional: a monorepo that versions independently.
+    - { path: services/api, version: "2.1.0" }            # overrides canonical for this unit
+    - { path: pkgs/cli, version: "2025.6.0", versioning: calver }  # own scheme too
+    # absent/empty ⇒ the whole repo follows canonical_version (the single-line default)
 
 languages:                        # auto-detected; user-editable
   go:     { dir: ".",  enabled: true }

@@ -181,22 +181,43 @@ reconciles intra-repo constraints by member **name** — `verify.go`/`bump.go` p
 version in *any* Workspace-capable format; core engine files contain no format/language names;
 adding workspace support to another language is implementing `version.Workspace` on its manager.
 
-### [ ] 6g — Independent per-package versions (monorepo) declared in `cairn.yaml`
+## 6g — Independent per-package versions (monorepo) declared in `cairn.yaml`
 **Goal:** Support a monorepo where packages version **independently** (each its own SemVer/
 CalVer line), not one repo-wide `project.canonical_version`. Versions (or version *scopes*) are
 declared in `cairn.yaml`; `bump`, `verify` (manifest + workspace + `version_sync` honesty), and
 the workspace interdependency reconciliation all resolve "the version for *this* package" from
 that config instead of assuming a single canonical. Mixed-language monorepos (a Java module and
-a Dart package each on their own version) must work.
-**Read:** AGENTS.md · docs/ARCHITECTURE.md (Versioning, Config schema) · internal/config/config.go ·
-internal/version/{version,sync,manifest}.go · internal/cli/{bump,verify}.go
-**Steps (sketch — split when scoped):** add a per-package/per-scope version map to the config
-schema (path/glob → version + scheme) with backward-compatible single-`canonical_version`
-default; a `version.Resolver` that maps a detected unit (and a workspace member name) to its
-target version; thread the resolver through `CheckManifests`/`CheckWorkspace`/`Rewrite`/`bump`
-(so `members` becomes name→version, lockstep being the degenerate all-equal case); decide bump
-ergonomics (`cairn bump <pkg> <level>` vs. repo-wide). Likely splits into config-schema,
-resolver, and bump/verify-wiring slices.
+a Dart package each on their own version) must work. The original single-run slice grew past one
+clean run, so it is split below: 6g-i is the config schema, 6g-ii the resolver, 6g-iii the
+bump/verify wiring.
+
+### [x] 6g-i — Config schema: per-package version map (backward-compatible)
+**Read:** AGENTS.md · docs/ARCHITECTURE.md (Config schema) · internal/config/config.go
+**Steps:** Add `project.packages` (`[]PackageVersion` of `{path, version, versioning?}`) to the
+config aggregate, defaulting to empty (whole repo follows `canonical_version`). Validate each
+entry (non-empty path + version; scheme override, if set, one of semver/calver) in `Validate`
+alongside the other actionable errors; `PackageVersion.VersioningFor(projectScheme)` resolves the
+inherit-vs-override scheme (mirrors `StrictFor`). Document the field in the ARCHITECTURE schema.
+**Acceptance:** a monorepo `cairn.yaml` with two `packages` parses (per-package version + scheme
+override resolved); invalid entries (empty path/version, unknown scheme) yield one actionable
+error; an absent `packages` is unchanged from today (single canonical).
+
+### [ ] 6g-ii — `version.Resolver`: map a detected unit/member to its target version
+**Read:** AGENTS.md · internal/config/config.go · internal/version/{version,sync,manifest}.go ·
+internal/detect/detect.go
+**Steps:** A `version.Resolver` built from `project` config that maps a detected unit dir (and a
+workspace member name) to its target version + scheme, falling back to `canonical_version` when
+no `packages` entry matches (lockstep = the degenerate all-equal case). Longest-path-prefix wins
+for nested packages.
+**Acceptance:** resolver returns the per-package version for a matching unit, canonical for an
+unmatched one, and the most-specific entry for nested paths; tested in isolation.
+
+### [ ] 6g-iii — Thread the resolver through `bump` + `verify`
+**Read:** AGENTS.md · docs/ARCHITECTURE.md (Versioning, data flow) · internal/version/{sync,manifest}.go ·
+internal/cli/{bump,verify}.go
+**Steps:** Thread the resolver through `CheckManifests`/`CheckWorkspace`/`Rewrite`/`bump` (so
+`members` becomes name→version, lockstep the degenerate case); decide bump ergonomics
+(`cairn bump <pkg> <level>` vs. repo-wide).
 **Acceptance:** a mixed-language monorepo fixture where two packages hold different versions:
 `verify` passes when each manifest/doc/interdependency matches *its* declared version and fails
 on drift of any one; `bump` advances a single package (and its dependents' constraints) without

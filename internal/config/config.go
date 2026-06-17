@@ -30,9 +30,34 @@ type Config struct {
 }
 
 // Project carries the canonical version (source of truth for version-sync) and scheme.
+// Packages, when present, declares a monorepo whose units version independently; an empty
+// list (the default) means the whole repo follows the single canonical_version.
 type Project struct {
-	CanonicalVersion string `yaml:"canonical_version"`
-	Versioning       string `yaml:"versioning"`
+	CanonicalVersion string           `yaml:"canonical_version"`
+	Versioning       string           `yaml:"versioning"`
+	Packages         []PackageVersion `yaml:"packages,omitempty"`
+}
+
+// PackageVersion declares one independently-versioned package in a monorepo: a path
+// (relative to the repo root) carrying its own version line, optionally on its own
+// versioning scheme. It overrides project.canonical_version for units under Path, so a
+// mixed-language repo can hold a Java module and a Dart package on separate version lines.
+// Resolving a detected unit to its PackageVersion is the version.Resolver's job (6g-ii);
+// this is purely the declared schema.
+type PackageVersion struct {
+	Path       string `yaml:"path"`
+	Version    string `yaml:"version"`
+	Versioning string `yaml:"versioning,omitempty"`
+}
+
+// VersioningFor returns the effective scheme for a package: its own override when set,
+// otherwise the project-wide project.versioning. Single resolution point so callers never
+// re-derive the inherit-vs-override precedence (mirrors StrictFor).
+func (p PackageVersion) VersioningFor(projectScheme string) string {
+	if p.Versioning != "" {
+		return p.Versioning
+	}
+	return projectScheme
 }
 
 // Language is one detected/enabled language unit. Strict overrides the repo-wide
@@ -225,6 +250,17 @@ func (c *Config) Validate() error {
 	for _, name := range sortedKeys(c.Languages) {
 		if c.Languages[name].Enabled && c.Languages[name].Dir == "" {
 			add("languages.%s.dir: must not be empty when enabled", name)
+		}
+	}
+	for i, p := range c.Project.Packages {
+		if strings.TrimSpace(p.Path) == "" {
+			add("project.packages[%d].path: must not be empty", i)
+		}
+		if strings.TrimSpace(p.Version) == "" {
+			add("project.packages[%d].version: must not be empty (each package carries its own version)", i)
+		}
+		if p.Versioning != "" && !oneOf(p.Versioning, "semver", "calver") {
+			add("project.packages[%d].versioning: %q is not one of [semver calver]", i, p.Versioning)
 		}
 	}
 

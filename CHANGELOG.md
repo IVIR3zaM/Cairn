@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Config schema now accepts `project.packages` — a per-package version map (`{path, version,
+  versioning?}`) for monorepos that version independently; absent/empty keeps the single
+  `canonical_version` behavior, and each entry is validated with an actionable error (6g-i).
 - `cairn verify` now tells you how to fix a failing stage and can fix it for you, with
   wording that never over-promises. Each language stage declares its auto-fix command, so
   a failure prints a hint beneath the tool output: a **formatter** fully resolves its
