@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `cairn bump <pkg> <level|version>` advances a single declared `project.packages` entry from
+  its own version line — updating only that package's manifests, its dependents' interdependency
+  constraints, and its `cairn.yaml` entry, leaving the other packages and `canonical_version`
+  untouched. Repo-wide `cairn bump <level>` and the no-argument wizard are unchanged (6g-iii-b).
 - `cairn verify` honesty checks are now per-package: the manifest, workspace-interdependency,
   and `version_sync` doc checks each resolve a unit (or version_sync file) to *its own* target
   version via `version.Resolver`, so a monorepo whose packages version independently passes

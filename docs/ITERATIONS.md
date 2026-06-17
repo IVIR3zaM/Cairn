@@ -232,7 +232,7 @@ version (a monorepo where two packages hold different versions passes when each 
 interdependency matches *its* version, fails on drift of any one); a repo with no `packages`
 behaves exactly as today (lockstep). Tested in the version package.
 
-### [ ] 6g-iii-b — Per-package `bump` ergonomics
+### [x] 6g-iii-b — Per-package `bump` ergonomics
 **Read:** AGENTS.md · docs/ARCHITECTURE.md (Versioning, data flow) · internal/version/resolver.go ·
 internal/cli/bump.go
 **Steps:** `cairn bump <pkg> <level|version>` advances a single declared package: compute its
@@ -242,6 +242,14 @@ stays for the canonical/lockstep case. Decide wizard behavior for monorepos.
 **Acceptance:** in the mixed-language monorepo fixture, `bump <pkg>` advances one package (and its
 dependents' constraints) without touching the others; a repo with only `canonical_version` behaves
 exactly as today.
+> Implemented: a two-arg form `bump <pkg> <level|version>` routes to `runPackageBump`, which builds
+> a `version.Resolver` from the post-bump project (target package at `next`, all others unchanged)
+> and reuses the shared `applyBump` engine — so honest manifests/docs are skipped and only the
+> bumped package + its stale dependents are written. `cairn.yaml` is updated via a scoped
+> `version:`-line edit on the matching `packages` entry (canonical untouched). **Wizard decision:**
+> the no-argument wizard stays repo-wide (canonical/lockstep); per-package advances are explicit
+> (`bump <pkg> <level|version>`), keeping the interactive flow simple. A package-scoped bump banners
+> and tags the package (`<pkg>-v<next>`).
 
 ## [ ] 7 — Changelog (Keep a Changelog)
 **Goal:** Promote `[Unreleased]` → version+date with refreshed compare links on `bump`.

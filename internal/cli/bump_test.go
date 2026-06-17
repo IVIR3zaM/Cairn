@@ -101,6 +101,79 @@ func TestRunBumpAutoDiscoversManifests(t *testing.T) {
 	}
 }
 
+// TestRunPackageBump is the 6g-iii-b acceptance: in a mixed-language monorepo whose packages
+// version independently, `bump <pkg>` advances exactly one declared package — its own manifest,
+// its dependents' interdependency constraints, and its cairn.yaml entry — while every other
+// package (a Dart sibling on a different version, a Rust crate) and canonical_version stay put.
+func TestRunPackageBump(t *testing.T) {
+	dir := t.TempDir()
+	cairn := writeFile(t, dir, "cairn.yaml",
+		"project:\n"+
+			"  canonical_version: \"9.9.9\"\n"+
+			"  packages:\n"+
+			"    - path: pkg_a\n"+
+			"      version: 1.0.0\n"+
+			"    - path: pkg_b\n"+
+			"      version: 2.0.0\n"+
+			"    - path: rust_pkg\n"+
+			"      version: 3.0.0\n")
+	// A Dart pub workspace: pkg_b depends on its sibling pkg_a. A Rust crate versions on its own.
+	writeFile(t, dir, "pubspec.yaml", "name: ws\nworkspace:\n  - pkg_a\n  - pkg_b\n")
+	pkgA := writeFile(t, dir, "pkg_a/pubspec.yaml", "name: pkg_a\nversion: 1.0.0\nresolution: workspace\n")
+	pkgB := writeFile(t, dir, "pkg_b/pubspec.yaml", "name: pkg_b\nversion: 2.0.0\nresolution: workspace\n\ndependencies:\n  pkg_a: ^1.0.0\n")
+	crate := writeFile(t, dir, "rust_pkg/Cargo.toml", "[package]\nname = \"rust_pkg\"\nversion = \"3.0.0\"\n")
+
+	cfg := config.Default()
+	cfg.Project.CanonicalVersion = "9.9.9"
+	cfg.Project.Packages = []config.PackageVersion{
+		{Path: "pkg_a", Version: "1.0.0"},
+		{Path: "pkg_b", Version: "2.0.0"},
+		{Path: "rust_pkg", Version: "3.0.0"},
+	}
+
+	var out bytes.Buffer
+	if err := runPackageBump(dir, cfg, "pkg_a", "minor", time.Now(), &out, false, false); err != nil {
+		t.Fatalf("runPackageBump: %v", err)
+	}
+
+	if got := read(t, pkgA); !strings.Contains(got, "version: 1.1.0") {
+		t.Errorf("pkg_a not advanced: %s", got)
+	}
+	if got := read(t, pkgB); !strings.Contains(got, "pkg_a: ^1.1.0") {
+		t.Errorf("dependent constraint not reconciled: %s", got)
+	}
+	if got := read(t, pkgB); !strings.Contains(got, "version: 2.0.0") {
+		t.Errorf("pkg_b's own version should be untouched: %s", got)
+	}
+	if got := read(t, crate); !strings.Contains(got, `version = "3.0.0"`) {
+		t.Errorf("rust_pkg should be untouched: %s", got)
+	}
+	got := read(t, cairn)
+	if !strings.Contains(got, "    - path: pkg_a\n      version: 1.1.0") {
+		t.Errorf("cairn.yaml pkg_a entry not advanced: %s", got)
+	}
+	if !strings.Contains(got, "version: 2.0.0") || !strings.Contains(got, "version: 3.0.0") {
+		t.Errorf("cairn.yaml other package entries must stay put: %s", got)
+	}
+	if !strings.Contains(got, `canonical_version: "9.9.9"`) {
+		t.Errorf("canonical_version must not change on a per-package bump: %s", got)
+	}
+	if s := out.String(); !strings.Contains(s, "Bumped pkg_a: 1.0.0 → 1.1.0") || !strings.Contains(s, "git tag pkg_a-v1.1.0") {
+		t.Errorf("per-package banner/tag missing:\n%s", s)
+	}
+}
+
+// TestRunPackageBumpUnknown confirms an undeclared package name fails fast with the valid
+// choices, rather than silently doing nothing.
+func TestRunPackageBumpUnknown(t *testing.T) {
+	cfg := config.Default()
+	cfg.Project.Packages = []config.PackageVersion{{Path: "pkg_a", Version: "1.0.0"}}
+	err := runPackageBump(t.TempDir(), cfg, "nope", "patch", time.Now(), &bytes.Buffer{}, false, false)
+	if err == nil || !strings.Contains(err.Error(), "pkg_a") {
+		t.Fatalf("want unknown-package error listing pkg_a, got %v", err)
+	}
+}
+
 // TestRunBumpExplicitVersion confirms an explicit X.Y.Z is honored over level math.
 func TestRunBumpExplicitVersion(t *testing.T) {
 	dir := t.TempDir()
