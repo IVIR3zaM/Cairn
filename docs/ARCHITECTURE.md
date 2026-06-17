@@ -83,8 +83,11 @@ commits:
   validate_hook: true             # install commit-msg hook
 
 changelog:
-  standard: keepachangelog        # keepachangelog | git-cliff | conventional-changelog
+  standard: keepachangelog        # keepachangelog | dart | git-cliff | conventional-changelog
   file: CHANGELOG.md
+  packages:                       # optional: a per-package changelog style for a monorepo
+    standard: dart                #   each package keeps its own (pub.dev best practice);
+    file: CHANGELOG.md            #   auto-discovered as <package-dir>/<file> per detected unit
 
 version_sync:                     # the doc-honesty check (Cairn's signature feature)
   files:

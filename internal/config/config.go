@@ -119,8 +119,20 @@ type Commits struct {
 	ValidateHook bool   `yaml:"validate_hook"`
 }
 
-// Changelog selects the changelog standard and file.
+// Changelog selects the changelog standard and file. Packages, when set, gives a
+// multi-package repo a second changelog style for each package's own CHANGELOG (pub.dev
+// best practice: every package keeps its own), discovered as <unit-dir>/<packages.file>
+// per detected unit — so `bump` promotes the root changelog and each package's in one pass.
 type Changelog struct {
+	Standard string            `yaml:"standard"`
+	File     string            `yaml:"file"`
+	Packages *PackageChangelog `yaml:"packages,omitempty"`
+}
+
+// PackageChangelog is the per-package changelog style for a multi-package repo: its standard
+// (often "dart"'s plain `## Unreleased` headings rather than the root's bracketed Keep a
+// Changelog ones) and the filename to look for inside each detected package directory.
+type PackageChangelog struct {
 	Standard string `yaml:"standard"`
 	File     string `yaml:"file"`
 }
@@ -213,6 +225,9 @@ func (c *Config) normalize() {
 			c.Languages[name] = lang
 		}
 	}
+	if c.Changelog.Packages != nil && c.Changelog.Packages.File == "" {
+		c.Changelog.Packages.File = "CHANGELOG.md"
+	}
 }
 
 // Validate reports every problem at once with an actionable message.
@@ -231,8 +246,11 @@ func (c *Config) Validate() error {
 	if !oneOf(c.Commits.Convention, "conventional", "gitmoji", "none") {
 		add("commits.convention: %q is not one of [conventional gitmoji none]", c.Commits.Convention)
 	}
-	if !oneOf(c.Changelog.Standard, "keepachangelog", "git-cliff", "conventional-changelog") {
-		add("changelog.standard: %q is not one of [keepachangelog git-cliff conventional-changelog]", c.Changelog.Standard)
+	if !oneOf(c.Changelog.Standard, "keepachangelog", "dart", "git-cliff", "conventional-changelog") {
+		add("changelog.standard: %q is not one of [keepachangelog dart git-cliff conventional-changelog]", c.Changelog.Standard)
+	}
+	if pc := c.Changelog.Packages; pc != nil && !oneOf(pc.Standard, "keepachangelog", "dart", "git-cliff", "conventional-changelog") {
+		add("changelog.packages.standard: %q is not one of [keepachangelog dart git-cliff conventional-changelog]", pc.Standard)
 	}
 	for _, s := range []struct {
 		name string

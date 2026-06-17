@@ -8,6 +8,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Changelog context (`internal/changelog`): `cairn bump` now promotes the configured
+  CHANGELOG's unreleased section into a dated release, leaving a fresh empty section and (for
+  Keep a Changelog) refreshing the compare links — the `[Unreleased]` link advances to the new
+  tag and a `[X.Y.Z]` link is inserted, with the `v`-prefix style derived from the file so Cairn
+  neither invents a repo URL nor imposes a tag convention. Promotion is idempotent. The changelog
+  *standard* is a self-registering registry (`changelog.WriterFor`): `keepachangelog`
+  (`## [Unreleased]` → `## [X.Y.Z] - DATE`) and `dart` (plain pub.dev style `## Unreleased` →
+  `## X.Y.Z - DATE`, no links) ship as the first two writers over a shared promotion engine;
+  `git-cliff`/`conventional-changelog` are future one-file additions.
+  - **Multi-package changelogs:** `changelog.packages` (`{standard, file}`) gives a monorepo a
+    second style for each package's own changelog, auto-discovered as `<package-dir>/<file>` per
+    detected package — so a bump promotes the root changelog *and* every package's in one pass,
+    each to its resolved version (a pub.dev workspace keeps a root Keep a Changelog file plus a
+    plain per-package one). A repo-wide bump covers every detected package; `bump <pkg>` covers
+    only that package (and leaves the root changelog alone).
+  - **Empty unreleased fails the bump:** a release whose targeted unreleased section is empty is
+    refused up front (nothing is written) listing every offending file, so a notes-less release
+    can't be cut. A changelog file that doesn't use the convention is skipped, not failed.
+  - Bump now honors `languages.<name>.enabled: false` in its detection-based manifest and
+    changelog discovery (like `verify` does), so a vendored/disabled tree (e.g. `reference/`) is
+    never bumped or promoted (7).
 - `cairn bump <pkg> <level|version>` advances a single declared `project.packages` entry from
   its own version line — updating only that package's manifests, its dependents' interdependency
   constraints, and its `cairn.yaml` entry, leaving the other packages and `canonical_version`

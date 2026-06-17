@@ -251,7 +251,7 @@ exactly as today.
 > (`bump <pkg> <level|version>`), keeping the interactive flow simple. A package-scoped bump banners
 > and tags the package (`<pkg>-v<next>`).
 
-## [ ] 7 — Changelog (Keep a Changelog)
+## [x] 7 — Changelog (Keep a Changelog)
 **Goal:** Promote `[Unreleased]` → version+date with refreshed compare links on `bump`.
 **Read:** AGENTS.md · docs/ARCHITECTURE.md (Changelog, extension points) · internal/version
 **Steps:** Stand up the changelog **standard registry** (`internal/changelog`,

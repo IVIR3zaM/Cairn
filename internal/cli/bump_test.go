@@ -70,6 +70,124 @@ func TestRunBumpUpdatesAllSurfaces(t *testing.T) {
 	}
 }
 
+// TestRunBumpPromotesChangelog proves bump wires the Changelog context in: a level bump
+// promotes the configured CHANGELOG's [Unreleased] entries into a dated release.
+func TestRunBumpPromotesChangelog(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "cairn.yaml", "project:\n  canonical_version: \"0.1.0\"\n")
+	cl := writeFile(t, dir, "CHANGELOG.md", "# Changelog\n\n## [Unreleased]\n\n### Added\n- A new thing.\n")
+	cfg := config.Default()
+	cfg.Project.CanonicalVersion = "0.1.0"
+
+	date := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
+	var out bytes.Buffer
+	if err := runBump(dir, cfg, "minor", date, &out, false, false); err != nil {
+		t.Fatalf("runBump: %v", err)
+	}
+	if got := read(t, cl); !strings.Contains(got, "## [0.2.0] - 2024-06-01") || !strings.Contains(got, "- A new thing.") {
+		t.Errorf("changelog not promoted: %s", got)
+	}
+}
+
+// TestRunBumpEmptyChangelogFails proves an empty [Unreleased] section blocks the bump entirely:
+// it errors and nothing is written (the manifest stays at the old version), so a notes-less
+// release can never be cut.
+func TestRunBumpEmptyChangelogFails(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "cairn.yaml", "project:\n  canonical_version: \"0.1.0\"\n")
+	writeFile(t, dir, "CHANGELOG.md", "# Changelog\n\n## [Unreleased]\n\n## [0.1.0] - 2024-01-01\n\n### Added\n- First.\n")
+	pkg := writeFile(t, dir, "web/package.json", `{"name":"x","version":"0.1.0"}`)
+	cfg := config.Default()
+	cfg.Project.CanonicalVersion = "0.1.0"
+	cfg.Languages = map[string]config.Language{"javascript": {Dir: "web", Enabled: true}}
+
+	var out bytes.Buffer
+	err := runBump(dir, cfg, "minor", time.Now(), &out, false, false)
+	if err == nil || !strings.Contains(err.Error(), "[Unreleased] section is empty") {
+		t.Fatalf("expected empty-changelog refusal, got err=%v", err)
+	}
+	if got := read(t, pkg); !strings.Contains(got, `"version":"0.1.0"`) {
+		t.Errorf("manifest must be untouched when the bump is refused: %s", got)
+	}
+}
+
+// TestRunBumpPromotesPerPackageChangelogs proves the multi-package edge case: with
+// changelog.packages set, a repo-wide bump promotes the root changelog (Keep a Changelog style)
+// and each detected package's own changelog (plain dart style), each to the bumped version, and
+// an empty [Unreleased] in any one of them fails the whole bump.
+func TestRunBumpPromotesPerPackageChangelogs(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "cairn.yaml", "project:\n  canonical_version: \"0.1.0\"\n")
+	// A Dart pub workspace with two members, each keeping its own changelog.
+	writeFile(t, dir, "pubspec.yaml", "name: ws\nworkspace:\n  - pkg_a\n  - pkg_b\n")
+	writeFile(t, dir, "pkg_a/pubspec.yaml", "name: pkg_a\nversion: 0.1.0\nresolution: workspace\n")
+	writeFile(t, dir, "pkg_b/pubspec.yaml", "name: pkg_b\nversion: 0.1.0\nresolution: workspace\n")
+	root := writeFile(t, dir, "CHANGELOG.md", "# Changelog\n\n## [Unreleased]\n\n### Added\n- Root note.\n")
+	clA := writeFile(t, dir, "pkg_a/CHANGELOG.md", "# Changelog\n\n## Unreleased\n\n- Pkg A note.\n")
+	clB := writeFile(t, dir, "pkg_b/CHANGELOG.md", "# Changelog\n\n## Unreleased\n\n- Pkg B note.\n")
+
+	cfg := config.Default()
+	cfg.Project.CanonicalVersion = "0.1.0"
+	cfg.Changelog.Packages = &config.PackageChangelog{Standard: "dart", File: "CHANGELOG.md"}
+
+	date := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
+	var out bytes.Buffer
+	if err := runBump(dir, cfg, "minor", date, &out, false, false); err != nil {
+		t.Fatalf("runBump: %v", err)
+	}
+	if got := read(t, root); !strings.Contains(got, "## [0.2.0] - 2024-06-01") {
+		t.Errorf("root changelog not promoted (Keep a Changelog style): %s", got)
+	}
+	for name, cl := range map[string]string{"pkg_a": clA, "pkg_b": clB} {
+		if got := read(t, cl); !strings.Contains(got, "## 0.2.0 - 2024-06-01") {
+			t.Errorf("%s changelog not promoted (dart style): %s", name, got)
+		}
+	}
+
+	// Emptying one package's Unreleased fails the whole bump.
+	writeFile(t, dir, "pkg_b/CHANGELOG.md", "# Changelog\n\n## Unreleased\n\n## 0.2.0 - 2024-06-01\n\n- Pkg B note.\n")
+	out.Reset()
+	err := runBump(dir, cfg, "minor", date, &out, false, false)
+	if err == nil || !strings.Contains(err.Error(), "pkg_b/CHANGELOG.md") {
+		t.Fatalf("expected refusal naming pkg_b's empty changelog, got err=%v", err)
+	}
+}
+
+// TestRunPackageBumpPromotesOnlyItsChangelog proves the "bump one package" case: with
+// independently-versioned packages, `bump <pkg>` promotes only that package's changelog (and
+// leaves the root changelog and the other package's changelog alone).
+func TestRunPackageBumpPromotesOnlyItsChangelog(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "cairn.yaml",
+		"project:\n  canonical_version: \"1.0.0\"\n  packages:\n    - path: pkg_a\n      version: \"1.0.0\"\n    - path: pkg_b\n      version: \"2.0.0\"\n")
+	writeFile(t, dir, "pkg_a/pubspec.yaml", "name: pkg_a\nversion: 1.0.0\n")
+	writeFile(t, dir, "pkg_b/pubspec.yaml", "name: pkg_b\nversion: 2.0.0\n")
+	root := writeFile(t, dir, "CHANGELOG.md", "# Changelog\n\n## [Unreleased]\n\n### Added\n- Root note.\n")
+	clA := writeFile(t, dir, "pkg_a/CHANGELOG.md", "# Changelog\n\n## Unreleased\n\n- Pkg A note.\n")
+	clB := writeFile(t, dir, "pkg_b/CHANGELOG.md", "# Changelog\n\n## Unreleased\n\n- Pkg B note.\n")
+
+	cfg, err := config.Load(filepath.Join(dir, "cairn.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Changelog.Packages = &config.PackageChangelog{Standard: "dart", File: "CHANGELOG.md"}
+
+	date := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
+	var out bytes.Buffer
+	if err := runPackageBump(dir, cfg, "pkg_a", "minor", date, &out, false, false); err != nil {
+		t.Fatalf("runPackageBump: %v", err)
+	}
+	if got := read(t, clA); !strings.Contains(got, "## 1.1.0 - 2024-06-01") {
+		t.Errorf("pkg_a changelog not promoted: %s", got)
+	}
+	if got := read(t, clB); strings.Contains(got, "## 2") || !strings.Contains(got, "## Unreleased\n\n- Pkg B note.") {
+		t.Errorf("pkg_b changelog must be untouched: %s", got)
+	}
+	if got := read(t, root); !strings.Contains(got, "## [Unreleased]\n\n### Added\n- Root note.") {
+		t.Errorf("root changelog must be untouched on a package-scoped bump: %s", got)
+	}
+}
+
 // TestRunBumpAutoDiscoversManifests proves the language-owned discovery path: with an empty
 // cfg.Languages, bump still finds and bumps each manifest purely from detection — a Rust
 // crate in a sub-dir, and the members of a Dart pub workspace whose 6e writer moves each

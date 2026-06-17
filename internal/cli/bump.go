@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/IVIR3zaM/Cairn/internal/changelog"
 	"github.com/IVIR3zaM/Cairn/internal/config"
 	"github.com/IVIR3zaM/Cairn/internal/detect"
 	"github.com/IVIR3zaM/Cairn/internal/report"
@@ -80,7 +81,7 @@ func runBump(wd string, cfg *config.Config, arg string, now time.Time, out io.Wr
 	if err != nil {
 		return err
 	}
-	return applyBump(wd, cfg, repoPlan(cur, next), out, palette{on: color})
+	return applyBump(wd, cfg, repoPlan(cur, next, now), out, palette{on: color})
 }
 
 // runPackageBump advances a single declared package in a monorepo: it computes the package's
@@ -113,6 +114,7 @@ func runPackageBump(wd string, cfg *config.Config, pkgArg, arg string, now time.
 	plan := bumpPlan{
 		cur:   cur,
 		next:  next,
+		date:  now,
 		res:   versioning.NewResolver(proj),
 		label: label,
 		updateConfig: func(wd string) (string, error) {
@@ -129,10 +131,11 @@ func runPackageBump(wd string, cfg *config.Config, pkgArg, arg string, now time.
 // repoPlan is the repo-wide bump plan: every unit moves to one version, so a lockstep resolver
 // (everything resolves to next) drives the manifest, workspace, and version-sync passes, and the
 // config update advances project.canonical_version.
-func repoPlan(cur, next versioning.Version) bumpPlan {
+func repoPlan(cur, next versioning.Version, now time.Time) bumpPlan {
 	return bumpPlan{
 		cur:   cur,
 		next:  next,
+		date:  now,
 		res:   versioning.NewResolver(config.Project{CanonicalVersion: next.String()}),
 		label: "",
 		updateConfig: func(wd string) (string, error) {
@@ -151,6 +154,7 @@ func repoPlan(cur, next versioning.Version) bumpPlan {
 // tail for the direct, wizard, and per-package paths — they differ only in how the plan is built.
 type bumpPlan struct {
 	cur, next    versioning.Version
+	date         time.Time
 	res          *versioning.Resolver
 	label        string
 	updateConfig func(wd string) (string, error)
@@ -253,7 +257,7 @@ func runBumpWizard(wd string, cfg *config.Config, in io.Reader, out io.Writer, c
 		fmt.Fprintln(out, "  aborted.")
 		return nil
 	}
-	return applyBump(wd, cfg, repoPlan(cur, next), out, p)
+	return applyBump(wd, cfg, repoPlan(cur, next, time.Now()), out, p)
 }
 
 // applyBump writes the plan's next version into the resolved manifests, the version-sync docs,
@@ -263,8 +267,17 @@ func runBumpWizard(wd string, cfg *config.Config, in io.Reader, out io.Writer, c
 // before it is called. A package-scoped plan (non-empty label) reports and tags the package.
 func applyBump(wd string, cfg *config.Config, plan bumpPlan, out io.Writer, p palette) error {
 	cur, next := plan.cur, plan.next
+
+	// Pre-flight the changelogs before mutating anything: a release with an empty `[Unreleased]`
+	// section is refused here, so the bump fails with nothing written rather than shipping a
+	// version with no notes. The actual promotions are applied below after the version writes.
+	clWrites, err := planChangelogs(wd, cfg, plan)
+	if err != nil {
+		return err
+	}
+
 	var changed []string
-	mans, err := updateManifests(wd, plan.res)
+	mans, err := updateManifests(wd, cfg, plan.res)
 	if err != nil {
 		return err
 	}
@@ -284,6 +297,13 @@ func applyBump(wd string, cfg *config.Config, plan bumpPlan, out io.Writer, p pa
 	}
 	if cfgDesc != "" {
 		changed = append(changed, cfgDesc)
+	}
+
+	for _, w := range clWrites {
+		if err := os.WriteFile(filepath.Join(wd, filepath.FromSlash(w.file)), w.content, 0o644); err != nil {
+			return err
+		}
+		changed = append(changed, w.file+" (changelog)")
 	}
 
 	fmt.Fprintln(out)
@@ -417,22 +437,22 @@ func describeJump(p palette, cur, next versioning.Version) string {
 // because the language owns it, not because a dir is listed in cairn.yaml. A declared file
 // with no writer registered yet is skipped; a missing file is skipped; a present file without
 // a locatable version errors. Returned paths are repo-relative and sorted for a clean summary.
-func updateManifests(wd string, res *versioning.Resolver) ([]string, error) {
-	det, err := detect.Detect(os.DirFS(wd), lookupTool)
+func updateManifests(wd string, cfg *config.Config, res *versioning.Resolver) ([]string, error) {
+	langs, err := detectedEnabled(wd, cfg)
 	if err != nil {
 		return nil, err
 	}
 	var changed []string
 	seen := map[string]bool{}       // a manifest path is rewritten at most once
 	changedSet := map[string]bool{} // dedupe across the version: pass and the workspace pass
-	units := make([]versioning.ManifestUnit, 0, len(det.Languages))
+	units := make([]versioning.ManifestUnit, 0, len(langs))
 	add := func(rel string) {
 		if !changedSet[rel] {
 			changedSet[rel] = true
 			changed = append(changed, rel)
 		}
 	}
-	for _, lang := range det.Languages {
+	for _, lang := range langs {
 		units = append(units, versioning.ManifestUnit{Dir: lang.Dir, Manifests: lang.VersionManifests})
 		// Each unit is set to *its own* resolved target version (per-package in a monorepo,
 		// canonical otherwise). A unit already at its target is a no-op below and skipped, so a
@@ -508,6 +528,151 @@ func updateCanonical(wd string, next versioning.Version) (bool, error) {
 		return false, nil
 	}
 	return true, os.WriteFile(path, updated, 0o644)
+}
+
+// changelogWrite is one pre-computed changelog promotion: the repo-relative file and its new
+// content. Writes are computed up front (in planChangelogs) so the bump can refuse an empty
+// `[Unreleased]` before touching any file, then applied only once everything else succeeds.
+type changelogWrite struct {
+	file    string
+	content []byte
+}
+
+// changelogTarget names a changelog to promote and to which version, in which standard's style.
+type changelogTarget struct {
+	file     string
+	standard string
+	version  versioning.Version
+}
+
+// planChangelogs computes every changelog promotion for this bump and refuses the bump if any
+// targeted changelog has an empty `[Unreleased]` section — so an empty changelog fails the bump
+// (nothing written) instead of cutting a notes-less release. A missing changelog file is skipped
+// (a package needn't keep one); a standard with no registered writer yet is skipped.
+func planChangelogs(wd string, cfg *config.Config, plan bumpPlan) ([]changelogWrite, error) {
+	targets, err := changelogTargets(wd, cfg, plan)
+	if err != nil {
+		return nil, err
+	}
+	var writes []changelogWrite
+	var empty []string
+	for _, t := range targets {
+		w, ok := changelog.WriterFor(t.standard)
+		if !ok {
+			continue // standard whose writer is still a future one-file addition
+		}
+		content, err := os.ReadFile(filepath.Join(wd, filepath.FromSlash(t.file)))
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		res, err := w.Promote(content, t.version, plan.date)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", t.file, err)
+		}
+		if !res.Found {
+			continue // file present but doesn't use the unreleased convention — skip, don't fail
+		}
+		if res.Empty {
+			empty = append(empty, t.file)
+			continue
+		}
+		if res.Changed {
+			writes = append(writes, changelogWrite{file: t.file, content: res.Content})
+		}
+	}
+	if len(empty) > 0 {
+		sort.Strings(empty)
+		return nil, fmt.Errorf("refusing to bump: the changelog [Unreleased] section is empty in %s — add release notes there before bumping", strings.Join(empty, ", "))
+	}
+	return writes, nil
+}
+
+// changelogTargets lists the changelogs a bump promotes: the root changelog (repo-wide bumps
+// only — a package-scoped bump leaves it alone) plus, when changelog.packages is configured,
+// each package's own changelog discovered as <unit-dir>/<file>. A repo-wide bump covers every
+// detected package; a package-scoped bump covers only the bumped package. Each is resolved to
+// its own target version via the plan's resolver, and the root file is never double-targeted.
+func changelogTargets(wd string, cfg *config.Config, plan bumpPlan) ([]changelogTarget, error) {
+	var targets []changelogTarget
+	seen := map[string]bool{}
+	add := func(t changelogTarget) {
+		if !seen[t.file] {
+			seen[t.file] = true
+			targets = append(targets, t)
+		}
+	}
+	if plan.label == "" && cfg.Changelog.File != "" {
+		add(changelogTarget{file: cfg.Changelog.File, standard: cfg.Changelog.Standard, version: plan.next})
+	}
+	pc := cfg.Changelog.Packages
+	if pc == nil {
+		return targets, nil
+	}
+	dirs, err := changelogPackageDirs(wd, cfg, plan)
+	if err != nil {
+		return nil, err
+	}
+	for _, dir := range dirs {
+		lit := plan.res.ForDir(dir).Version
+		if lit == "" {
+			continue
+		}
+		v, err := versioning.Parse(lit)
+		if err != nil {
+			return nil, fmt.Errorf("version for %s: %w", dir, err)
+		}
+		add(changelogTarget{
+			file:     filepath.ToSlash(filepath.Join(dir, pc.File)),
+			standard: pc.Standard,
+			version:  v,
+		})
+	}
+	return targets, nil
+}
+
+// changelogPackageDirs lists the package directories whose changelogs a bump touches: just the
+// bumped package for a package-scoped bump, or every detected unit (auto-discovered, no config)
+// for a repo-wide one — mirroring how manifests are discovered from detection rather than dirs
+// listed in cairn.yaml.
+func changelogPackageDirs(wd string, cfg *config.Config, plan bumpPlan) ([]string, error) {
+	if plan.label != "" {
+		return []string{plan.label}, nil
+	}
+	langs, err := detectedEnabled(wd, cfg)
+	if err != nil {
+		return nil, err
+	}
+	var dirs []string
+	seen := map[string]bool{}
+	for _, lang := range langs {
+		d := path.Clean(lang.Dir)
+		if !seen[d] {
+			seen[d] = true
+			dirs = append(dirs, d)
+		}
+	}
+	return dirs, nil
+}
+
+// detectedEnabled returns the detected languages minus any explicitly disabled in cairn.yaml
+// (`languages.<name>.enabled: false`), so bump — like verify — never bumps or promotes a tree
+// the project opted out of, e.g. a vendored `reference/` port marked disabled.
+func detectedEnabled(wd string, cfg *config.Config) ([]detect.Language, error) {
+	det, err := detect.Detect(os.DirFS(wd), lookupTool)
+	if err != nil {
+		return nil, err
+	}
+	var langs []detect.Language
+	for _, lang := range det.Languages {
+		if l, ok := cfg.Languages[lang.Name]; ok && !l.Enabled {
+			continue
+		}
+		langs = append(langs, lang)
+	}
+	return langs, nil
 }
 
 // findPackage returns the index of the project.packages entry whose path matches pkgArg
