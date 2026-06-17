@@ -262,15 +262,29 @@ documented, not stubbed.
 **Acceptance:** A sample CHANGELOG is promoted correctly (idempotent, links updated);
 empty-Unreleased warns; `WriterFor("keepachangelog")` resolves via self-registration.
 
-## [ ] 8 — Commit conventions + commit-msg hook + bump inference
-**Goal:** Validate commit messages and infer the SemVer bump from history.
-**Read:** AGENTS.md · docs/ARCHITECTURE.md (CommitConventions, extension points) · internal/version
+## 8 — Commit conventions + commit-msg hook + bump inference (split)
+**Goal:** Validate commit messages and infer the SemVer bump from history. The original
+single-run slice grew past one clean run (a new `commit` context *and* threading inference
+through the 30KB `bump.go`), so it is split: 8a stands up the `CommitValidator` registry +
+conventional convention (validate + classify); 8b wires history-based bump inference using it.
+
+### [x] 8a — CommitValidator registry + conventional convention
+**Read:** AGENTS.md · docs/ARCHITECTURE.md (CommitConventions, extension points) · internal/changelog/changelog.go (registry template) · internal/version
 **Steps:** `CommitValidator` as a **convention registry** (`internal/commit`,
-`register`/`ValidatorFor`); add `conv_conventional.go` (self-registered), leaving
-gitmoji/none as future `conv_<name>.go` files; classify feat/fix/breaking; optional
-sign-off; `cairn bump` (no level) infers the next version from commits since the last tag.
-**Acceptance:** Valid/invalid messages classified correctly; inference picks the right
-level on a fixture history; the convention resolves via `ValidatorFor` per config.
+`register`/`ValidatorFor`/`Conventions`, panic on dup); add `conv_conventional.go`
+(self-registered), leaving gitmoji/none as future `conv_<name>.go` files; classify
+feat/fix/breaking → minor/patch/major; validate header shape + optional sign-off (DCO).
+**Acceptance:** Valid/invalid messages classified correctly (feat→minor, fix→patch,
+`!`/`BREAKING CHANGE`→major, other→none); sign-off required vs absent enforced; the
+convention resolves via `ValidatorFor` per config (`Conventions` lists registered keys).
+
+### [ ] 8b — `cairn bump` (no level) infers the next bump from commit history
+**Read:** AGENTS.md · docs/ARCHITECTURE.md (CommitConventions, data flow) · internal/commit · internal/version · internal/cli/bump.go
+**Steps:** Read commits since the last tag (shell out to `git`), classify each via the
+configured `commit.Validator`, take the highest bump, and use it as the default level when
+`cairn bump` is run without a level (wizard preselects it / direct no-arg applies it).
+**Acceptance:** Inference picks the right level on a fixture history; no commits / no tag
+degrades sensibly; the convention resolves via `ValidatorFor` per config.
 
 ## [ ] 9 — Wiring: hooks + CI generation
 **Goal:** `init`'s outputs — install git hooks and generate a CI workflow calling `verify`.

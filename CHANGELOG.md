@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- CommitConventions context (`internal/commit`): a self-registering `CommitValidator` registry
+  (`commit.ValidatorFor`/`Conventions`) with `conventional` as the first convention — it validates
+  a Conventional Commits header (`type(scope)?!?: description`, known-type set, optional DCO
+  sign-off) and classifies a message into the SemVer bump it implies (`feat`→minor, `fix`→patch,
+  `!`/`BREAKING CHANGE`→major, else none) for upcoming history-based bump inference. `gitmoji`/
+  `none` are future one-file additions.
 - Changelog context (`internal/changelog`): `cairn bump` now promotes the configured
   CHANGELOG's unreleased section into a dated release, leaving a fresh empty section and (for
   Keep a Changelog) refreshing the compare links — the `[Unreleased]` link advances to the new
