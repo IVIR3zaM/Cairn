@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `version.Resolver` maps a detected unit directory to its target version + scheme,
+  resolving `project.packages` (most-specific path prefix wins, nested overrides ancestor)
+  and falling back to `canonical_version` when no package matches — the foundation for
+  per-package bump/verify (6g-ii).
 - Config schema now accepts `project.packages` — a per-package version map (`{path, version,
   versioning?}`) for monorepos that version independently; absent/empty keeps the single
   `canonical_version` behavior, and each entry is validated with an actionable error (6g-i).

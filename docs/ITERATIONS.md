@@ -202,7 +202,7 @@ inherit-vs-override scheme (mirrors `StrictFor`). Document the field in the ARCH
 override resolved); invalid entries (empty path/version, unknown scheme) yield one actionable
 error; an absent `packages` is unchanged from today (single canonical).
 
-### [ ] 6g-ii — `version.Resolver`: map a detected unit/member to its target version
+### [x] 6g-ii — `version.Resolver`: map a detected unit/member to its target version
 **Read:** AGENTS.md · internal/config/config.go · internal/version/{version,sync,manifest}.go ·
 internal/detect/detect.go
 **Steps:** A `version.Resolver` built from `project` config that maps a detected unit dir (and a
