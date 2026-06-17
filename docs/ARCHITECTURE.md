@@ -102,13 +102,16 @@ live in code so a minimal `cairn.yaml` still works.
 plan (format→lint→typecheck→test→build per language, + version_sync honesty) →
 runs each via its adapter through ToolRunner → Reporter renders a compact summary →
 exit code = worst result.` Missing tool ⇒ behave per `required` (fail vs warn+skip with
-install hint).
+install hint). A failed stage that can auto-repair (its adapter advertises a fix command)
+prints that command plus `cairn verify --fix`; `--fix` re-runs every fixable stage in
+write mode (format + fixable lints) before reporting whatever could not be repaired.
 
 **`cairn bump <level|version>`**
 `Config → Versioning computes next version (explicit, level, or inferred from commits) →
 VersionManager updates each language manifest → version_sync rewrites doc patterns →
 Changelog promotes [Unreleased] → Reporter prints diff summary + suggested commit/tag.
-Never commits automatically.`
+Never commits automatically.` A non-increasing bump is refused; the direct path takes
+`--force` (`-f`) to permit a deliberate downgrade, mirroring the wizard's double-confirm.
 
 **`cairn init`**
 `Detection → wizard (multiselect features + standards, smart defaults) → write

@@ -12,8 +12,8 @@ import (
 func init() {
 	register("rust", func(run runner.ToolRunner, _ string) Adapter {
 		return adapter{run: run, specs: []stepSpec{
-			{kind: Format, tool: "rustfmt", exec: rustFormat},
-			{kind: Lint, tool: "clippy-driver", exec: rustLint},
+			{kind: Format, tool: "rustfmt", fix: "cargo fmt", exec: rustFormat},
+			{kind: Lint, tool: "clippy-driver", fix: "cargo clippy --fix", exec: rustLint},
 			{kind: Test, tool: "cargo", exec: rustTest},
 		}}
 	})
@@ -30,9 +30,17 @@ func rustFormat(ctx context.Context, run runner.ToolRunner, unit LangUnit, mode 
 	return passOrFail(res, err)
 }
 
-// rustLint runs clippy with warnings promoted to errors so any lint fails the stage.
-func rustLint(ctx context.Context, run runner.ToolRunner, unit LangUnit, _ Mode) StepResult {
-	res, err := run.Run(ctx, runner.Command{Name: "cargo", Args: []string{"clippy", "--", "-D", "warnings"}, Dir: unit.Dir, Env: cargoColor(unit)})
+// rustLint runs clippy with warnings promoted to errors so any lint fails the stage. In
+// fix mode it applies clippy's machine-applicable suggestions in place first; --allow-dirty
+// /--allow-staged let it write even with uncommitted changes (verify is run mid-edit), and
+// it still exits non-zero on whatever could not be auto-fixed.
+func rustLint(ctx context.Context, run runner.ToolRunner, unit LangUnit, mode Mode) StepResult {
+	args := []string{"clippy"}
+	if mode == ModeFix {
+		args = append(args, "--fix", "--allow-dirty", "--allow-staged")
+	}
+	args = append(args, "--", "-D", "warnings")
+	res, err := run.Run(ctx, runner.Command{Name: "cargo", Args: args, Dir: unit.Dir, Env: cargoColor(unit)})
 	return passOrFail(res, err)
 }
 

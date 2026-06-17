@@ -13,8 +13,8 @@ import (
 func init() {
 	register("dart", func(run runner.ToolRunner, _ string) Adapter {
 		return adapter{run: run, specs: []stepSpec{
-			{kind: Format, tool: "dart", exec: dartFormat},
-			{kind: Lint, tool: "dart", exec: dartLint},
+			{kind: Format, tool: "dart", fix: "dart format .", exec: dartFormat},
+			{kind: Lint, tool: "dart", fix: "dart fix --apply", exec: dartLint},
 			{kind: Test, tool: "dart", exec: dartTest},
 		}}
 	})
@@ -33,8 +33,16 @@ func dartFormat(ctx context.Context, run runner.ToolRunner, unit LangUnit, mode 
 
 // dartLint runs the static analyzer. Plain `dart analyze` already fails on warnings
 // and errors but exits 0 on info-level lints (e.g. very_good_analysis style rules);
-// strict mode adds --fatal-infos so those infos fail the stage too.
-func dartLint(ctx context.Context, run runner.ToolRunner, unit LangUnit, _ Mode) StepResult {
+// strict mode adds --fatal-infos so those infos fail the stage too. In fix mode it first
+// applies `dart fix --apply` (analyze and the fixer are separate commands in Dart), then
+// re-analyzes so the stage still reports whatever the fixer could not repair.
+func dartLint(ctx context.Context, run runner.ToolRunner, unit LangUnit, mode Mode) StepResult {
+	if mode == ModeFix {
+		fix, err := run.Run(ctx, runner.Command{Name: "dart", Args: []string{"fix", "--apply"}, Dir: unit.Dir})
+		if r, bad := startOrExitFailure(fix, err); bad {
+			return r
+		}
+	}
 	args := []string{"analyze"}
 	if unit.Strict {
 		args = append(args, "--fatal-infos")

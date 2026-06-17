@@ -67,13 +67,15 @@ const (
 // per-tool knob that honors it lives in each lang_<name>.go, not in the gate core.
 // Strict asks adapters to run their tools at maximum severity — promoting analyzer
 // infos / linter warnings to failures — where the toolchain offers such a switch;
-// like Color, the per-tool flag lives in each lang_<name>.go. The gate core resolves
-// neither knob, it only carries them.
+// like Color, the per-tool flag lives in each lang_<name>.go. Fix asks every stage that
+// can auto-repair (a Step with a non-empty Fix command) to rewrite in place instead of
+// only checking. The gate core resolves none of these knobs, it only carries them.
 type LangUnit struct {
 	Name   string
 	Dir    string
 	Color  bool
 	Strict bool
+	Fix    bool
 }
 
 // StepResult is what a single Step.Run reports.
@@ -86,6 +88,10 @@ type StepResult struct {
 type Step interface {
 	Kind() Kind
 	Tool() string // the executable this stage needs; matched against ToolInfo
+	// Fix is the user-facing command that auto-repairs this stage (e.g.
+	// "golangci-lint run --fix"), or "" when the stage has no auto-fix. A non-empty
+	// Fix both signals that ModeFix is meaningful and is what verify shows on failure.
+	Fix() string
 	Run(ctx context.Context, unit LangUnit, mode Mode) StepResult
 }
 
@@ -101,13 +107,24 @@ type ToolInfo struct {
 }
 
 // Result is one line of the verify outcome. Dir is the unit's directory, so callers can
-// distinguish same-language units in different parts of the repo.
+// distinguish same-language units in different parts of the repo. The Fix* fields describe
+// a failed stage's auto-repair so the caller can guide the user honestly:
+//   - Fix is the stage's fix command (empty when the stage has no fixer).
+//   - FixPartial is true when that fixer only covers a subset of findings (linters: a
+//     formatter fully resolves its stage, a linter does not — staticcheck SA*, type errors,
+//     etc. have no autofix), so the user must not be promised a clean run.
+//   - FixApplied is true when this very run already executed the fixer (--fix): a lingering
+//     failure is then the remainder the fixer could not repair, and re-suggesting the
+//     command would be misleading — the caller says "manual fix needed" instead.
 type Result struct {
-	Kind   Kind
-	Lang   string
-	Dir    string
-	Status Status
-	Detail string
+	Kind       Kind
+	Lang       string
+	Dir        string
+	Status     Status
+	Detail     string
+	Fix        string
+	FixPartial bool
+	FixApplied bool
 }
 
 // Observer is notified as each stage begins and ends so the caller can render live
@@ -151,12 +168,28 @@ func Run(ctx context.Context, v config.Verify, a Adapter, unit LangUnit, tools m
 		if obs != nil {
 			obs.Begin(unit, k)
 		}
+		// A stage rewrites in place when either --fix asked every fixable stage to
+		// (unit.Fix and the stage advertises a Fix command) or the config pins this
+		// formatter to fix mode. Otherwise it only checks.
 		mode := ModeCheck
-		if k == Format && sc.Mode == "fix" {
+		switch {
+		case unit.Fix && step.Fix() != "":
+			mode = ModeFix
+		case k == Format && sc.Mode == "fix":
 			mode = ModeFix
 		}
 		r := runWithTimeout(ctx, v.StepTimeout(), step, unit, mode)
-		results = append(results, emit(Result{Kind: k, Lang: unit.Name, Dir: unit.Dir, Status: r.Status, Detail: r.Detail}))
+		res := Result{Kind: k, Lang: unit.Name, Dir: unit.Dir, Status: r.Status, Detail: r.Detail}
+		// Describe the auto-fix on every failure that has one, but honestly: a formatter
+		// fully resolves its stage, a linter only covers a subset (FixPartial), and once a
+		// --fix run already ran the fixer (FixApplied) the remaining failure needs a manual
+		// fix rather than another run of the same command.
+		if res.Status == StatusFail && step.Fix() != "" {
+			res.Fix = step.Fix()
+			res.FixPartial = k != Format
+			res.FixApplied = mode == ModeFix
+		}
+		results = append(results, emit(res))
 	}
 	return results
 }

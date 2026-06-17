@@ -50,6 +50,19 @@ func TestGoFormatFixUsesWriteFlag(t *testing.T) {
 	}
 }
 
+// The lint stage advertises an auto-fix and, in fix mode, runs golangci-lint with --fix
+// so verify --fix applies fixable findings before reporting the remainder.
+func TestGoLintFixUsesFixFlag(t *testing.T) {
+	if got := stepOf("go", &runner.Fake{}, Lint).Fix(); got != "golangci-lint run --fix" {
+		t.Errorf("lint fix command: got %q", got)
+	}
+	f := &runner.Fake{}
+	runStep("go", f, Lint, ModeFix)
+	if len(f.Calls) != 1 || len(f.Calls[0].Args) != 2 || f.Calls[0].Args[1] != "--fix" {
+		t.Errorf("fix mode should call golangci-lint run --fix, got %+v", f.Calls)
+	}
+}
+
 // Lint and test surface the tool's exit code: zero passes, non-zero fails.
 func TestGoExitCodeDrivesLintAndTest(t *testing.T) {
 	cases := []struct {

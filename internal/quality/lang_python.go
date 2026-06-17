@@ -21,21 +21,21 @@ func init() {
 		switch standard {
 		case "ruff":
 			specs = []stepSpec{
-				{kind: Format, tool: "ruff", exec: pythonRuffFormat},
-				{kind: Lint, tool: "ruff", exec: pythonRuffLint},
+				{kind: Format, tool: "ruff", fix: "ruff format .", exec: pythonRuffFormat},
+				{kind: Lint, tool: "ruff", fix: "ruff check --fix .", exec: pythonRuffLint},
 				{kind: Test, tool: "python3", exec: pythonTest},
 			}
 		case "black+flake8":
 			specs = []stepSpec{
-				{kind: Format, tool: "black", exec: pythonBlackFormat},
-				{kind: Lint, tool: "flake8", exec: pythonFlake8Lint},
+				{kind: Format, tool: "black", fix: "black .", exec: pythonBlackFormat},
+				{kind: Lint, tool: "flake8", exec: pythonFlake8Lint}, // flake8 only reports; no auto-fix
 				{kind: Test, tool: "python3", exec: pythonTest},
 			}
 		default:
 			// Unknown standard; fall back to ruff
 			specs = []stepSpec{
-				{kind: Format, tool: "ruff", exec: pythonRuffFormat},
-				{kind: Lint, tool: "ruff", exec: pythonRuffLint},
+				{kind: Format, tool: "ruff", fix: "ruff format .", exec: pythonRuffFormat},
+				{kind: Lint, tool: "ruff", fix: "ruff check --fix .", exec: pythonRuffLint},
 				{kind: Test, tool: "python3", exec: pythonTest},
 			}
 		}
@@ -62,9 +62,14 @@ func pythonRuffFormat(ctx context.Context, run runner.ToolRunner, unit LangUnit,
 	return StepResult{Status: StatusPass}
 }
 
-// pythonRuffLint runs ruff check to find linting issues.
-func pythonRuffLint(ctx context.Context, run runner.ToolRunner, unit LangUnit, _ Mode) StepResult {
-	res, err := run.Run(ctx, runner.Command{Name: "ruff", Args: []string{"check", "."}, Dir: unit.Dir, Env: pyColor(unit)})
+// pythonRuffLint runs ruff check to find linting issues. In fix mode it applies ruff's
+// safe fixes in place first, then still exits non-zero on whatever it could not repair.
+func pythonRuffLint(ctx context.Context, run runner.ToolRunner, unit LangUnit, mode Mode) StepResult {
+	args := []string{"check", "."}
+	if mode == ModeFix {
+		args = []string{"check", "--fix", "."}
+	}
+	res, err := run.Run(ctx, runner.Command{Name: "ruff", Args: args, Dir: unit.Dir, Env: pyColor(unit)})
 	return passOrFail(res, err)
 }
 

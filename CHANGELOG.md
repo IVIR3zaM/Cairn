@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `cairn verify` now tells you how to fix a failing stage and can fix it for you, with
+  wording that never over-promises. Each language stage declares its auto-fix command, so
+  a failure prints a hint beneath the tool output: a **formatter** fully resolves its
+  stage, so it reads `↳ auto-fixable: run \`<cmd>\` (or \`cairn verify --fix\`)`; a
+  **linter** only covers a subset (staticcheck `SA*`, type errors, etc. have no autofix),
+  so it reads `↳ some findings may be auto-fixable: run \`<cmd>\` …; the rest need a manual
+  fix`. The new `--fix` flag re-runs every fixable stage in write mode before reporting
+  whatever could not be repaired, and a failure that **survives** a `--fix` run reads
+  `↳ auto-fix already ran — the findings above need a manual fix` instead of re-suggesting
+  the command that just failed to resolve it. Wired per language: Go (`gofumpt -w`,
+  `golangci-lint run --fix`), Rust (`cargo fmt`, `cargo clippy --fix`), Python (ruff
+  `format`/`check --fix`, or `black`), JS/TS (prettier/eslint `--fix` or biome `--write`),
+  and Dart (`dart format`, `dart fix --apply`). Version drift gets its own accurate hint
+  pointing at `cairn bump <canonical>` rather than `--fix`. Java stays build-tool-owned
+  (no fix). A stage advertises its fix via a `fix:` field in its `stepSpec`, so adding one
+  for a new language stays a one-file change.
 - `cairn bump <version> --force` (`-f`) allows a deliberate **downgrade** on the direct,
   non-interactive path — the equivalent of the wizard's double-confirm. Without it, a direct
   bump still refuses to go backwards, and the refusal now points at `--force`. A no-op (the

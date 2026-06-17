@@ -52,8 +52,9 @@ func (pubspec) SetSiblings(content []byte, members map[string]bool, v Version) (
 	changed := false
 	out := pubspecDep.ReplaceAllFunc(content, func(line []byte) []byte {
 		g := pubspecDep.FindSubmatch(line)
-		name, ver := string(g[1]), string(g[3])
-		if !members[name] || ver == v.String() {
+		// Index members by string(g[1]) directly — binding it to a local first defeats the
+		// compiler's no-alloc map-key optimization (staticcheck SA6001).
+		if !members[string(g[1])] || string(g[3]) == v.String() {
 			return line
 		}
 		changed = true

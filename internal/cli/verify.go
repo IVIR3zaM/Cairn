@@ -64,7 +64,10 @@ func (o *liveObserver) Begin(unit quality.LangUnit, k quality.Kind) {
 }
 
 func (o *liveObserver) End(r quality.Result) {
-	s := report.Step{Name: stepName(r.Lang, r.Dir, r.Kind), Status: toStatus(r.Status), Detail: r.Detail}
+	s := report.Step{
+		Name: stepName(r.Lang, r.Dir, r.Kind), Status: toStatus(r.Status), Detail: r.Detail,
+		Fix: r.Fix, FixPartial: r.FixPartial, FixApplied: r.FixApplied,
+	}
 	if o.done != nil {
 		o.done(s) // resolve the running indicator started in Begin
 		o.done = nil
@@ -122,7 +125,7 @@ func isExecutable(path string) bool {
 }
 
 func newVerifyCmd() *cobra.Command {
-	var quiet, verbose bool
+	var quiet, verbose, fix bool
 	cmd := &cobra.Command{
 		Use:   "verify",
 		Short: "Run the configured quality gate (format, lint, test, …) for each language",
@@ -175,7 +178,7 @@ func newVerifyCmd() *cobra.Command {
 				results := quality.Run(context.Background(), cfg.Verify, adapter,
 					// Force tool color only when streaming to a color TTY (verbose); piped or
 					// NO_COLOR runs stay clean so captured output never carries escape codes.
-					quality.LangUnit{Name: lang.Name, Dir: lang.Dir, Color: verbose && opts.Color, Strict: cfg.StrictFor(lang.Name)},
+					quality.LangUnit{Name: lang.Name, Dir: lang.Dir, Color: verbose && opts.Color, Strict: cfg.StrictFor(lang.Name), Fix: fix},
 					toolInfo(lang), obs)
 				all = append(all, results...)
 			}
@@ -207,6 +210,7 @@ func newVerifyCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "only print the summary")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "show full tool output")
+	cmd.Flags().BoolVar(&fix, "fix", false, "auto-fix what each language's tools can repair (format, fixable lints) before reporting")
 	return cmd
 }
 
@@ -229,11 +233,18 @@ func checkVersionSync(wd string, cfg *config.Config, rep report.Reporter, obs *l
 			reasons[i] = d.Reason()
 		}
 		step.Status = report.Fail
-		step.Detail = strings.Join(reasons, "\n")
+		step.Detail = strings.Join(reasons, "\n") + versionFixHint(cfg.Project.CanonicalVersion)
 	}
 	rep.Step(step)
 	obs.steps = append(obs.steps, step)
 	return step.Status == report.Fail, nil
+}
+
+// versionFixHint points a version drift at the command that rewrites every doc and manifest
+// back to canonical. Unlike the language stages, --fix does not resync versions (it has no
+// target to write), so the hint names `cairn bump` explicitly rather than `verify --fix`.
+func versionFixHint(canonical string) string {
+	return fmt.Sprintf("\n↳ resync: run `cairn bump %s` to rewrite every file back to canonical", canonical)
 }
 
 // checkManifestSync runs the non-mutating honesty assertion over language-owned manifests:
@@ -273,7 +284,7 @@ func checkManifestSync(wd string, cfg *config.Config, res *detect.Result, rep re
 			reasons[i] = d.Reason()
 		}
 		step.Status = report.Fail
-		step.Detail = strings.Join(reasons, "\n")
+		step.Detail = strings.Join(reasons, "\n") + versionFixHint(cfg.Project.CanonicalVersion)
 	}
 	rep.Step(step)
 	obs.steps = append(obs.steps, step)

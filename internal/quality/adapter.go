@@ -25,11 +25,14 @@ func colorEnv(unit LangUnit, vars ...string) []string {
 type execFunc func(ctx context.Context, run runner.ToolRunner, unit LangUnit, mode Mode) StepResult
 
 // stepSpec is a language's declaration of one stage: its kind, the tool that gates it
-// (matched against detection's ToolInfo), and how to run it. Language files build a
-// slice of these; the shared adapter binds them to a ToolRunner.
+// (matched against detection's ToolInfo), how to run it, and — when the stage can repair
+// itself — the user-facing fix command (e.g. "golangci-lint run --fix"). An empty fix
+// means the stage only checks; exec must honor ModeFix whenever fix is set. Language
+// files build a slice of these; the shared adapter binds them to a ToolRunner.
 type stepSpec struct {
 	kind Kind
 	tool string
+	fix  string
 	exec execFunc
 }
 
@@ -57,6 +60,7 @@ type step struct {
 
 func (s step) Kind() Kind   { return s.spec.kind }
 func (s step) Tool() string { return s.spec.tool }
+func (s step) Fix() string  { return s.spec.fix }
 func (s step) Run(ctx context.Context, unit LangUnit, mode Mode) StepResult {
 	return s.spec.exec(ctx, s.run, unit, mode)
 }

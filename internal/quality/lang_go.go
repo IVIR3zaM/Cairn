@@ -14,8 +14,8 @@ import (
 func init() {
 	register("go", func(run runner.ToolRunner, _ string) Adapter {
 		return adapter{run: run, specs: []stepSpec{
-			{kind: Format, tool: "gofumpt", exec: goFormat},
-			{kind: Lint, tool: "golangci-lint", exec: goLint},
+			{kind: Format, tool: "gofumpt", fix: "gofumpt -w .", exec: goFormat},
+			{kind: Lint, tool: "golangci-lint", fix: "golangci-lint run --fix", exec: goLint},
 			{kind: Test, tool: "go", exec: goTest},
 		}}
 	})
@@ -37,10 +37,15 @@ func goFormat(ctx context.Context, run runner.ToolRunner, unit LangUnit, mode Mo
 	return StepResult{Status: StatusPass}
 }
 
-func goLint(ctx context.Context, run runner.ToolRunner, unit LangUnit, _ Mode) StepResult {
+func goLint(ctx context.Context, run runner.ToolRunner, unit LangUnit, mode Mode) StepResult {
 	// golangci-lint uses fatih/color, which honors CLICOLOR_FORCE; gofumpt/go test emit no
-	// color, so only the linter needs a knob.
-	res, err := run.Run(ctx, runner.Command{Name: "golangci-lint", Args: []string{"run"}, Dir: unit.Dir, Env: colorEnv(unit, "CLICOLOR_FORCE=1")})
+	// color, so only the linter needs a knob. In fix mode it applies every fixable finding
+	// in place, then still exits non-zero on the issues no fixer covers.
+	args := []string{"run"}
+	if mode == ModeFix {
+		args = append(args, "--fix")
+	}
+	res, err := run.Run(ctx, runner.Command{Name: "golangci-lint", Args: args, Dir: unit.Dir, Env: colorEnv(unit, "CLICOLOR_FORCE=1")})
 	return passOrFail(res, err)
 }
 

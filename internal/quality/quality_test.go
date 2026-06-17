@@ -11,6 +11,7 @@ import (
 type fakeStep struct {
 	kind    Kind
 	tool    string
+	fix     string
 	res     StepResult
 	ran     bool
 	gotMode Mode
@@ -18,6 +19,7 @@ type fakeStep struct {
 
 func (f *fakeStep) Kind() Kind   { return f.kind }
 func (f *fakeStep) Tool() string { return f.tool }
+func (f *fakeStep) Fix() string  { return f.fix }
 func (f *fakeStep) Run(_ context.Context, _ LangUnit, m Mode) StepResult {
 	f.ran = true
 	f.gotMode = m
@@ -120,6 +122,46 @@ func TestRunPassesFixModeToFormatter(t *testing.T) {
 	}
 }
 
+// LangUnit.Fix runs every stage that advertises a fix command in ModeFix, while a stage
+// with no fix command stays in check mode even under --fix.
+func TestRunFixModeRunsFixableStages(t *testing.T) {
+	lint := &fakeStep{kind: Lint, tool: "linter", fix: "linter --fix", res: StepResult{Status: StatusPass}}
+	test := &fakeStep{kind: Test, tool: "tester", res: StepResult{Status: StatusPass}}
+
+	Run(context.Background(), enabledVerify(), fakeAdapter{steps: []Step{lint, test}},
+		LangUnit{Name: "go", Fix: true}, allInstalled("linter", "tester"), nil)
+
+	if lint.gotMode != ModeFix {
+		t.Errorf("fixable lint under --fix: want ModeFix, got %v", lint.gotMode)
+	}
+	if test.gotMode != ModeCheck {
+		t.Errorf("non-fixable test under --fix: want ModeCheck, got %v", test.gotMode)
+	}
+}
+
+// A failed fixable stage carries its fix command, flagged honestly: a lint failure is
+// partial (its fixer covers only some findings), and a failure that survived a --fix run
+// is marked applied so the caller says "manual fix" instead of re-suggesting the command.
+func TestRunSurfacesFixHonestly(t *testing.T) {
+	v := enabledVerify()
+	run := func(kind Kind, fix bool) Result {
+		s := &fakeStep{kind: kind, tool: "t", fix: "t --fix", res: StepResult{Status: StatusFail, Detail: "boom"}}
+		got := Run(context.Background(), v, fakeAdapter{steps: []Step{s}},
+			LangUnit{Name: "go", Fix: fix}, allInstalled("t"), nil)
+		return got[0]
+	}
+
+	if r := run(Lint, false); r.Fix != "t --fix" || !r.FixPartial || r.FixApplied {
+		t.Errorf("check-mode lint failure: want partial fix not applied, got %+v", r)
+	}
+	if r := run(Format, false); !(r.Fix == "t --fix" && !r.FixPartial) {
+		t.Errorf("format failure should be a complete (non-partial) fix, got %+v", r)
+	}
+	if r := run(Lint, true); r.Fix != "t --fix" || !r.FixApplied {
+		t.Errorf("post-fix failure should be flagged applied, got %+v", r)
+	}
+}
+
 // ctxStep blocks until its context is cancelled, recording whether it was handed a
 // deadline — standing in for a tool that would otherwise hang verify forever.
 type ctxStep struct {
@@ -130,6 +172,7 @@ type ctxStep struct {
 
 func (s *ctxStep) Kind() Kind   { return s.kind }
 func (s *ctxStep) Tool() string { return s.tool }
+func (s *ctxStep) Fix() string  { return "" }
 func (s *ctxStep) Run(ctx context.Context, _ LangUnit, _ Mode) StepResult {
 	_, s.deadline = ctx.Deadline()
 	<-ctx.Done() // released only when the configured timeout fires

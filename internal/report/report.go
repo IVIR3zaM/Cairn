@@ -60,11 +60,17 @@ const (
 )
 
 // Step is one line in a report: a named unit of work and how it ended. Detail holds
-// tool output or a hint, shown on failure or when Verbose is set.
+// tool output or a hint, shown on failure or when Verbose is set. The Fix* fields drive
+// the auto-fix line shown beneath a failure's detail (see renderFixHint): Fix is the
+// command that repairs it, FixPartial marks a fixer that only covers some findings, and
+// FixApplied marks a failure that survived a `--fix` run (so it needs a manual fix).
 type Step struct {
-	Name   string
-	Status Status
-	Detail string
+	Name       string
+	Status     Status
+	Detail     string
+	Fix        string
+	FixPartial bool
+	FixApplied bool
 }
 
 // Reporter renders progress and a compact summary. Running announces a step that is
@@ -183,6 +189,29 @@ func (r *reporter) Step(s Step) {
 		for _, line := range strings.Split(strings.TrimRight(s.Detail, "\n"), "\n") {
 			fmt.Fprintf(r.w, "      %s\n", line)
 		}
+	}
+	if hint := fixHint(s); hint != "" {
+		fmt.Fprintf(r.w, "      %s\n", r.paint(colorDim, hint))
+	}
+}
+
+// fixHint returns the auto-fix line for a failed step, worded to match how much its fixer
+// can actually do — so it never promises a clean run the tool cannot deliver. It returns
+// "" when there is nothing honest to suggest (no fixer, or the step did not fail).
+func fixHint(s Step) string {
+	if s.Fix == "" || s.Status != Fail {
+		return ""
+	}
+	switch {
+	case s.FixApplied:
+		// --fix already ran the fixer this run; what remains needs human attention.
+		return "↳ auto-fix already ran — the findings above need a manual fix"
+	case s.FixPartial:
+		// Linters: some findings are auto-fixable, many (staticcheck SA*, type errors) are not.
+		return fmt.Sprintf("↳ some findings may be auto-fixable: run `%s` (or `cairn verify --fix`); the rest need a manual fix", s.Fix)
+	default:
+		// Formatters fully resolve their stage, so the fix is a sure thing.
+		return fmt.Sprintf("↳ auto-fixable: run `%s` (or `cairn verify --fix`)", s.Fix)
 	}
 }
 

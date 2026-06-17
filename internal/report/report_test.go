@@ -53,6 +53,47 @@ func TestDetailShownOnFailHiddenForPass(t *testing.T) {
 	}
 }
 
+// A passing step never shows a fix hint, and a complete (formatter) fixer is advertised
+// as a sure thing naming both the tool command and --fix.
+func TestFixHintCompleteShownOnFailOnly(t *testing.T) {
+	var buf bytes.Buffer
+	r := New(&buf, Options{})
+	r.Step(Step{Name: "ok", Status: Pass, Fix: "gofumpt -w ."})
+	r.Step(Step{Name: "fmt", Status: Fail, Detail: "trace", Fix: "gofumpt -w ."})
+	out := buf.String()
+	if strings.Count(out, "auto-fixable") != 1 {
+		t.Errorf("fix hint should appear once (failing step only):\n%s", out)
+	}
+	if !strings.Contains(out, "gofumpt -w .") || !strings.Contains(out, "cairn verify --fix") {
+		t.Errorf("fix hint should name both the tool command and --fix:\n%s", out)
+	}
+}
+
+// A partial (linter) fixer is hedged — it must not promise a clean run, since findings
+// like staticcheck SA* have no autofix.
+func TestFixHintPartialIsHedged(t *testing.T) {
+	var buf bytes.Buffer
+	New(&buf, Options{}).Step(Step{Name: "lint", Status: Fail, Detail: "SA6001", Fix: "golangci-lint run --fix", FixPartial: true})
+	out := buf.String()
+	if !strings.Contains(out, "may be auto-fixable") || !strings.Contains(out, "the rest need a manual fix") {
+		t.Errorf("partial fixer should be hedged, not promised:\n%s", out)
+	}
+}
+
+// Once --fix has already run, a surviving failure points at a manual fix instead of
+// re-suggesting the same command that just failed to resolve it.
+func TestFixHintAppliedAsksForManualFix(t *testing.T) {
+	var buf bytes.Buffer
+	New(&buf, Options{}).Step(Step{Name: "lint", Status: Fail, Detail: "SA6001", Fix: "golangci-lint run --fix", FixPartial: true, FixApplied: true})
+	out := buf.String()
+	if !strings.Contains(out, "auto-fix already ran") || !strings.Contains(out, "manual fix") {
+		t.Errorf("post-fix failure should ask for a manual fix:\n%s", out)
+	}
+	if strings.Contains(out, "cairn verify --fix") {
+		t.Errorf("post-fix failure should not re-suggest --fix:\n%s", out)
+	}
+}
+
 // Without a TTY, Running animates nothing — done(s) just prints the final result line,
 // keeping piped/CI output free of cursor-control escapes.
 func TestRunningFallsBackToResultLineWhenNotTTY(t *testing.T) {
