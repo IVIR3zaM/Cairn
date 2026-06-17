@@ -154,7 +154,7 @@ internal/version/manifest.go · internal/cli/bump.go
 entry; a custom README still updates via `version_sync`; a declared manifest without a writer is
 skipped; adding a manifest location is a one-file change.
 
-### [ ] 6e — pubspec-workspace manager + verify honesty language-owned coverage
+### [x] 6e — pubspec-workspace manager + verify honesty language-owned coverage
 **Goal:** Add the Dart `pubspec.yaml` writer (workspace-aware: rewrites sibling `^{VERSION}`
 interdependency constraints in lockstep), and give `verify`'s honesty check the same
 language-owned manifest coverage so drift is caught without per-file `version_sync` config.
@@ -165,7 +165,42 @@ interdep rewrite); a non-mutating `version.CheckManifests` wired into `verify` a
 `version_sync` check.
 **Acceptance:** In a Dart-workspace fixture, `bump` updates every member `pubspec.yaml`
 `version:` and sibling `^` constraint with no per-file config; `verify` fails on a drifted
-manifest and passes when honest.
+manifest and passes when honest. *(Generalized in 6f: the workspace interdependency rewrite/
+check became the language-agnostic `version.Workspace` capability + `RewriteWorkspace`/
+`CheckWorkspace` engine, so any multi-package format — npm/Cargo workspace, Maven/Gradle
+reactor — participates by self-registering, with no language named in `verify.go`/`bump.go`.)*
+
+### [x] 6f — Language-agnostic multi-package workspaces (`version.Workspace` capability)
+**Read:** AGENTS.md · internal/version/{manifest,manifest_pubspec}.go · internal/cli/{verify,bump}.go
+**Steps:** Lift the Dart-specific sibling pass out of the engine into a self-registering
+`version.Workspace` optional capability (`PackageID`/`SetSiblings`/`CheckSiblings`); the engine
+(`RewriteWorkspace`/`CheckWorkspace`) groups manifests by format, gathers member identities, and
+reconciles intra-repo constraints by member **name** — `verify.go`/`bump.go` pass the generic
+`[]ManifestUnit` and never name a language. `pubspec` is the first participant.
+**Acceptance:** `verify` flags / `bump` repairs a member-to-member constraint pinned at a stale
+version in *any* Workspace-capable format; core engine files contain no format/language names;
+adding workspace support to another language is implementing `version.Workspace` on its manager.
+
+### [ ] 6g — Independent per-package versions (monorepo) declared in `cairn.yaml`
+**Goal:** Support a monorepo where packages version **independently** (each its own SemVer/
+CalVer line), not one repo-wide `project.canonical_version`. Versions (or version *scopes*) are
+declared in `cairn.yaml`; `bump`, `verify` (manifest + workspace + `version_sync` honesty), and
+the workspace interdependency reconciliation all resolve "the version for *this* package" from
+that config instead of assuming a single canonical. Mixed-language monorepos (a Java module and
+a Dart package each on their own version) must work.
+**Read:** AGENTS.md · docs/ARCHITECTURE.md (Versioning, Config schema) · internal/config/config.go ·
+internal/version/{version,sync,manifest}.go · internal/cli/{bump,verify}.go
+**Steps (sketch — split when scoped):** add a per-package/per-scope version map to the config
+schema (path/glob → version + scheme) with backward-compatible single-`canonical_version`
+default; a `version.Resolver` that maps a detected unit (and a workspace member name) to its
+target version; thread the resolver through `CheckManifests`/`CheckWorkspace`/`Rewrite`/`bump`
+(so `members` becomes name→version, lockstep being the degenerate all-equal case); decide bump
+ergonomics (`cairn bump <pkg> <level>` vs. repo-wide). Likely splits into config-schema,
+resolver, and bump/verify-wiring slices.
+**Acceptance:** a mixed-language monorepo fixture where two packages hold different versions:
+`verify` passes when each manifest/doc/interdependency matches *its* declared version and fails
+on drift of any one; `bump` advances a single package (and its dependents' constraints) without
+touching the others; a repo with only `canonical_version` behaves exactly as today.
 
 ## [ ] 7 — Changelog (Keep a Changelog)
 **Goal:** Promote `[Unreleased]` → version+date with refreshed compare links on `bump`.

@@ -188,9 +188,18 @@ func newVerifyCmd() *cobra.Command {
 				return errSilent
 			}
 
+			// Same honesty check, language-owned: every detected manifest (Cargo.toml,
+			// package.json, pyproject.toml, pubspec.yaml, …) must state the canonical
+			// version — drift in the files bump writes fails verify, no version_sync needed.
+			manifestsFailed, err := checkManifestSync(wd, cfg, res, rep, obs)
+			if err != nil {
+				rep.Error(err)
+				return errSilent
+			}
+
 			rep.Summary(obs.steps)
 
-			if quality.Failed(all) || syncFailed {
+			if quality.Failed(all) || syncFailed || manifestsFailed {
 				return errSilent
 			}
 			return nil
@@ -214,6 +223,50 @@ func checkVersionSync(wd string, cfg *config.Config, rep report.Reporter, obs *l
 		return false, err
 	}
 	step := report.Step{Name: "version-sync", Status: report.Pass}
+	if len(drifts) > 0 {
+		reasons := make([]string, len(drifts))
+		for i, d := range drifts {
+			reasons[i] = d.Reason()
+		}
+		step.Status = report.Fail
+		step.Detail = strings.Join(reasons, "\n")
+	}
+	rep.Step(step)
+	obs.steps = append(obs.steps, step)
+	return step.Status == report.Fail, nil
+}
+
+// checkManifestSync runs the non-mutating honesty assertion over language-owned manifests:
+// every detected unit's declared manifest (resolved from detection, not cairn.yaml) must
+// state the canonical version. It renders one "version-manifests" step, returns whether any
+// manifest drifted, and surfaces config errors. When nothing version-bearing is found (no
+// canonical, or a repo whose languages own no writable manifest) it adds no step, keeping
+// the summary clean for projects this doesn't apply to.
+func checkManifestSync(wd string, cfg *config.Config, res *detect.Result, rep report.Reporter, obs *liveObserver) (bool, error) {
+	if cfg.Project.CanonicalVersion == "" {
+		return false, nil
+	}
+	units := make([]versioning.ManifestUnit, 0, len(res.Languages))
+	for _, lang := range res.Languages {
+		units = append(units, versioning.ManifestUnit{Dir: lang.Dir, Manifests: lang.VersionManifests})
+	}
+	drifts, checked, err := versioning.CheckManifests(os.DirFS(wd), cfg.Project.CanonicalVersion, units)
+	if err != nil {
+		return false, err
+	}
+	// Multi-package repos also carry member-to-member constraints (a workspace/reactor pinning
+	// a sibling at `^X.Y.Z`) that must track canonical — a stale pin looks honest to the
+	// per-file version: check above. The workspace pass catches it generically: any manifest
+	// format that opts into version.Workspace participates, no language named here.
+	wsDrifts, err := versioning.CheckWorkspace(os.DirFS(wd), cfg.Project.CanonicalVersion, units)
+	if err != nil {
+		return false, err
+	}
+	drifts = append(drifts, wsDrifts...)
+	if checked == 0 && len(drifts) == 0 {
+		return false, nil // no language-owned manifest present — nothing to assert
+	}
+	step := report.Step{Name: "version-manifests", Status: report.Pass}
 	if len(drifts) > 0 {
 		reasons := make([]string, len(drifts))
 		for i, d := range drifts {

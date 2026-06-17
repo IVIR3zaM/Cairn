@@ -311,20 +311,29 @@ func updateManifests(wd string, next versioning.Version) ([]string, error) {
 		return nil, err
 	}
 	var changed []string
-	seen := map[string]bool{} // a manifest path is rewritten at most once
+	seen := map[string]bool{}       // a manifest path is rewritten at most once
+	changedSet := map[string]bool{} // dedupe across the version: pass and the workspace pass
+	units := make([]versioning.ManifestUnit, 0, len(res.Languages))
+	add := func(rel string) {
+		if !changedSet[rel] {
+			changedSet[rel] = true
+			changed = append(changed, rel)
+		}
+	}
 	for _, lang := range res.Languages {
+		units = append(units, versioning.ManifestUnit{Dir: lang.Dir, Manifests: lang.VersionManifests})
 		for _, fname := range lang.VersionManifests {
 			m, ok := versioning.ManagerFor(fname)
 			if !ok {
 				continue // declared location with no writer yet (native-only/future format)
 			}
-			rel := filepath.Join(lang.Dir, fname)
+			rel := filepath.ToSlash(filepath.Join(lang.Dir, fname))
 			if seen[rel] {
 				continue
 			}
 			seen[rel] = true
-			path := filepath.Join(wd, rel)
-			content, err := os.ReadFile(path)
+			full := filepath.Join(wd, filepath.FromSlash(rel))
+			content, err := os.ReadFile(full)
 			if os.IsNotExist(err) {
 				continue
 			}
@@ -338,11 +347,22 @@ func updateManifests(wd string, next versioning.Version) ([]string, error) {
 			if !did {
 				continue
 			}
-			if err := os.WriteFile(path, out, 0o644); err != nil {
+			if err := os.WriteFile(full, out, 0o644); err != nil {
 				return changed, err
 			}
-			changed = append(changed, rel)
+			add(rel)
 		}
+	}
+	// Multi-package repos move member-to-member constraints in lockstep with the versions just
+	// written. Handled generically: any manifest format that opts into version.Workspace
+	// participates, identified by member name so a sibling pinned at any stale version is
+	// repaired — not only one that matched the previous version. No language named here.
+	wsChanged, err := versioning.RewriteWorkspace(wd, units, next)
+	if err != nil {
+		return changed, err
+	}
+	for _, p := range wsChanged {
+		add(p)
 	}
 	sort.Strings(changed)
 	return changed, nil

@@ -71,14 +71,17 @@ func TestRunBumpUpdatesAllSurfaces(t *testing.T) {
 }
 
 // TestRunBumpAutoDiscoversManifests proves the language-owned discovery path: with an empty
-// cfg.Languages, bump still finds and bumps a manifest purely from detection (a Rust crate in
-// a sub-dir), while a declared-but-writerless manifest (Dart's pubspec.yaml, whose writer
-// lands in 6e) is left untouched rather than erroring.
+// cfg.Languages, bump still finds and bumps each manifest purely from detection — a Rust
+// crate in a sub-dir, and the members of a Dart pub workspace whose 6e writer moves each
+// member's `version:` and the member-to-member `^` interdependency in lockstep — no config.
 func TestRunBumpAutoDiscoversManifests(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "cairn.yaml", "project:\n  canonical_version: \"0.1.0\"\n")
 	crate := writeFile(t, dir, "engine/Cargo.toml", "[package]\nname = \"x\"\nversion = \"0.1.0\"\n")
-	pubspec := writeFile(t, dir, "app/pubspec.yaml", "name: app\nversion: 0.1.0\n")
+	// A Dart pub workspace: the root aggregates two members; pkg_b depends on pkg_a.
+	writeFile(t, dir, "pubspec.yaml", "name: ws\nworkspace:\n  - pkg_a\n  - pkg_b\n")
+	pkgA := writeFile(t, dir, "pkg_a/pubspec.yaml", "name: pkg_a\nversion: 0.1.0\nresolution: workspace\n")
+	pkgB := writeFile(t, dir, "pkg_b/pubspec.yaml", "name: pkg_b\nversion: 0.1.0\nresolution: workspace\n\ndependencies:\n  pkg_a: ^0.1.0\n")
 
 	cfg := config.Default()
 	cfg.Project.CanonicalVersion = "0.1.0" // note: no cfg.Languages entries at all
@@ -90,8 +93,11 @@ func TestRunBumpAutoDiscoversManifests(t *testing.T) {
 	if got := read(t, crate); !strings.Contains(got, `version = "0.2.0"`) {
 		t.Errorf("auto-discovered Cargo.toml not bumped: %s", got)
 	}
-	if got := read(t, pubspec); !strings.Contains(got, "version: 0.1.0") {
-		t.Errorf("pubspec without a writer should be untouched in 6d: %s", got)
+	if got := read(t, pkgA); !strings.Contains(got, "version: 0.2.0") {
+		t.Errorf("workspace member pkg_a version not bumped: %s", got)
+	}
+	if got := read(t, pkgB); !strings.Contains(got, "version: 0.2.0") || !strings.Contains(got, "pkg_a: ^0.2.0") {
+		t.Errorf("workspace member pkg_b version/interdependency not bumped in lockstep: %s", got)
 	}
 }
 

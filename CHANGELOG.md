@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Language-agnostic **multi-package workspace** support for `bump`/`verify`, plus the Dart
+  `pubspec.yaml` writer as its first participant. A manifest manager may now opt into the
+  self-registering `version.Workspace` capability (`PackageID`/`SetSiblings`/`CheckSiblings`);
+  the engine (`version.RewriteWorkspace`/`CheckWorkspace`) gathers package identities across
+  every manifest of that format and reconciles member-to-member dependency constraints by
+  **member name**, so a sibling pinned at any stale version is repaired/flagged while an
+  external dependency is left alone — for any workspace/reactor format, with no language named
+  in the CLI or engine. `cairn bump` moves each member's `version:` and its sibling `^`
+  constraints in lockstep; `cairn verify` adds a language-owned manifest honesty check
+  (`version.CheckManifests`) and the workspace check alongside `version_sync`, so drift in the
+  files `bump` writes fails verify with no per-file config.
 - `cairn bump` now finds version manifests by **language-owned auto-discovery** instead of
   scanning configured dirs: each language declares its manifest filename(s) in its detect spec
   (rust→`Cargo.toml`, python→`pyproject.toml`, javascript→`package.json`, dart→`pubspec.yaml`),
