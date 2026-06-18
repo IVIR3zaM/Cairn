@@ -332,7 +332,7 @@ precedence, and disable resolution a concern of the **`config` module** — then
 on top. Split: **10a** is the config refactor + new schema + ARCHITECTURE update; **10b** is the
 `init` wizard (the original iteration 10).
 
-### [ ] 10a — Per-directory config model (config owns the cascade)
+### [~] 10a — Per-directory config model (config owns the cascade)
 **Goal:** One unified per-directory override model, resolved entirely inside `config`. The CLI
 contexts stop reading `cairn.yaml`/walking dirs themselves and instead ask `config` for the
 resolved settings of a directory (and whether it is active). This is the schema and the resolver;
@@ -398,6 +398,45 @@ internal/config/config.go · internal/version/resolver.go · internal/cli/{verif
 and its own `cairn.yaml` is never read; a single-package repo with no `directories:` behaves exactly
 as before; the cascade lives in `config` (CLI contexts contain no YAML-reading or precedence logic);
 ARCHITECTURE matches. Tested in the `config` package.
+
+> This slice grew past one clean run (a breaking schema change + cascade resolver + refitting four
+> engine signatures and four CLI/detect callers + an ARCHITECTURE rewrite). Per its own "if one grows,
+> split it" note it is split below: **10a-i** is the reusable `Directory` override-block type + the
+> field-level cascade merge (the "design it once" core, purely additive, build stays green); **10a-ii**
+> is the loader/discovery + disable-gate + `Resolve(dir)` API (the schema-version decision lands here);
+> **10a-iii** refits the callers, drops the legacy fields, and rewrites ARCHITECTURE.
+
+#### [x] 10a-i — `Directory` override block + field-level cascade merge
+**Read:** AGENTS.md · internal/config/config.go
+**Steps:** Define the `Directory` override block (the repo-baseline keys — `enabled`, `version`,
+`versioning`, `languages` knobs, `verify`, `commits`, `changelog`, `version_sync`, `hooks`, `ci`,
+`addons` — each a pointer/map so "unset means inherit"). Implement the pairwise field-level overlay
+(`over` wins where set, else `base`; `languages` merged by name) and a `cascade(layers…)` that folds
+low→high so nearest wins. Pure data + merge only — no loader/discovery/disable-gate wiring yet, legacy
+fields untouched so every caller still compiles.
+**Acceptance:** in the `config` package, overlaying two `Directory` blocks resolves field-by-field
+(set field wins, unset inherits, `languages` merges by name); `cascade` over three layers gives the
+nearest-set value per field; the build and existing tests stay green.
+
+#### [ ] 10a-ii — Loader/discovery + disable gate + `Resolve(dir)` API
+**Read:** AGENTS.md · internal/config/{config,directory}.go
+**Steps:** Decide the schema-version marker (top-level `version` is repurposed as the project baseline
+version, so the format version moves to a dedicated `schema` key — default `"2"`; accept-and-translate
+the legacy `version: "1"`/`project:` shape or fail with a migration note). Discover nested
+`cairn.yaml` files, apply the absolute disable gate before any read, run the 10a-i cascade per the
+layered precedence (baseline < own-file ancestors < root `directories.<path>` ancestors), and expose
+`Resolve(dir)` + active/pruned-directory enumeration.
+**Acceptance:** new schema parses; the two precedence examples resolve as specified; a root-disabled
+directory is pruned and its own `cairn.yaml` is never read; legacy single-package repo unchanged.
+
+#### [ ] 10a-iii — Refit callers + drop legacy fields + ARCHITECTURE rewrite
+**Read:** AGENTS.md · docs/ARCHITECTURE.md · internal/version/resolver.go · internal/cli/{verify,bump}.go · internal/detect/detect.go
+**Steps:** `version.Resolver`, `verify`, `bump`, and detection consume the new `config` API; remove
+their direct precedence/`packages` logic and the dropped fields (`project.*`, `changelog.packages`,
+`version_sync.files`, `languages.*.dir`). Rewrite the ARCHITECTURE config-schema block + add the
+per-directory precedence subsection; reconcile Versioning/Detection + ADRs.
+**Acceptance:** the cascade lives in `config` (CLI contexts contain no YAML-reading or precedence
+logic); a single-package repo with no `directories:` behaves exactly as before; ARCHITECTURE matches.
 
 ### [ ] 10b — Onboarding wizard (`init`)
 **Goal:** The headline UX: a fast, friendly `cairn init`, on top of the 10a config model.

@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Per-directory config core (10a-i): a `config.Directory` override block (the repo-baseline keys, each
+  optional ⇒ "inherit") plus the field-level `overlay`/`cascade` merge — set field wins, unset
+  inherits, `languages` merges by name. The reusable "design it once" foundation for the upcoming
+  unified per-directory config model; loader/discovery/cascade wiring lands in 10a-ii/iii.
 - Wiring context (`internal/wiring`): install Cairn into a repo so the local hook and CI share one
   `cairn verify` (ADR-005). `InstallHooks` writes the configured git hooks (`hooks.pre_commit`/
   `commit_msg`/`pre_push`) as executable POSIX-sh scripts into a tracked `.cairn/hooks` dir and
