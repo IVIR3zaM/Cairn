@@ -418,7 +418,7 @@ fields untouched so every caller still compiles.
 (set field wins, unset inherits, `languages` merges by name); `cascade` over three layers gives the
 nearest-set value per field; the build and existing tests stay green.
 
-#### [ ] 10a-ii — Loader/discovery + disable gate + `Resolve(dir)` API
+#### [x] 10a-ii — Loader/discovery + disable gate + `Resolve(dir)` API
 **Read:** AGENTS.md · internal/config/{config,directory}.go
 **Steps:** Decide the schema-version marker (top-level `version` is repurposed as the project baseline
 version, so the format version moves to a dedicated `schema` key — default `"2"`; accept-and-translate

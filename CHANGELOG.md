@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Per-directory config loader (10a-ii): `config.LoadTree` reads the repo `cairn.yaml` (schema `"2"`,
+  with the format marker moved to a `schema:` key and the top-level `version:` repurposed as the repo
+  baseline version), discovers nested `<path>/cairn.yaml` override blocks, and resolves a directory's
+  effective settings via `Tree.Resolve(dir)` — folding repo baseline < own-file ancestors < root
+  `directories.<path>` overrides (nearest wins). An absolute disable gate (`enabled: false`) prunes a
+  subtree before its own file is ever read; `Active`/`Pruned` enumerate the tree. A legacy
+  `version: "1"`/`project:` file is accepted and translated, never silently misread.
 - Per-directory config core (10a-i): a `config.Directory` override block (the repo-baseline keys, each
   optional ⇒ "inherit") plus the field-level `overlay`/`cascade` merge — set field wins, unset
   inherits, `languages` merges by name. The reusable "design it once" foundation for the upcoming
