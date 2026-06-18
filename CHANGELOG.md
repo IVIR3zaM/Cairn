@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- Dropped the legacy schema-1 fields from the `config` aggregate (10a-iii-c-iii): `project.*`
+  (`Project`/`PackageVersion`), `changelog.packages` (`Changelog.Packages`/`PackageChangelog`),
+  and `languages.*.dir`. The per-directory `Tree` (schema 2) is now the sole version/location
+  model — independence comes from a directory's own `version:`, per-package changelogs from a
+  directory's own `changelog:` override block, and locations from detection. The legacy
+  `version: "1"` / `project:` shape is still accepted and translated in `tree.go`. Removed the
+  legacy `version.NewResolver(config.Project)` constructor; `NewResolverFromTree` is the only one.
+
 ### Fixed
 - Schema-2 `cairn.yaml` baseline now starts from the in-code defaults, so a *partial* top-level
   block (e.g. `verify: { strict: true }`) merges field-by-field instead of wiping the stages it

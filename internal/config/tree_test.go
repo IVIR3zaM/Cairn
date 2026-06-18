@@ -274,3 +274,25 @@ func TestLoadTree_UnknownSchemaRejected(t *testing.T) {
 		t.Fatal("LoadTree accepted unknown schema, want error")
 	}
 }
+
+// A legacy file with an invalid project.packages entry (empty path/version or an unknown
+// scheme) is rejected with an actionable error rather than translated into a broken Tree.
+func TestLoadTree_LegacyInvalidPackageRejected(t *testing.T) {
+	fsys := fstest.MapFS{
+		"cairn.yaml": &fstest.MapFile{Data: []byte(`
+version: "1"
+project:
+  packages:
+    - { path: pkgs/cli, version: "1.0.0", versioning: weekly }
+`)},
+	}
+	_, err := LoadTree(fsys)
+	if err == nil {
+		t.Fatal("LoadTree accepted invalid legacy package, want error")
+	}
+	for _, want := range []string{"project.packages", "weekly"} {
+		if !contains(err.Error(), want) {
+			t.Errorf("error %q missing %q", err.Error(), want)
+		}
+	}
+}

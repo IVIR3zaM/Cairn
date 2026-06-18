@@ -31,9 +31,20 @@ func TestCheck(t *testing.T) {
 }
 
 // lockstep is a Resolver where every file/unit resolves to one version — the degenerate,
-// canonical-only case the version_sync tests exercise.
+// baseline-only case the version_sync tests exercise. Built from a schema-2 Tree carrying just
+// the repo baseline version (omitted when empty, so lockstep("") models "no version set").
 func lockstep(canonical string) *Resolver {
-	return NewResolver(config.Project{CanonicalVersion: canonical, Versioning: "semver"})
+	body := "schema: \"2\"\nversioning: semver\n"
+	if canonical != "" {
+		body += "version: \"" + canonical + "\"\n"
+	}
+	tree, err := config.LoadTree(fstest.MapFS{
+		"cairn.yaml": &fstest.MapFile{Data: []byte(body)},
+	})
+	if err != nil {
+		panic(err)
+	}
+	return NewResolverFromTree(tree)
 }
 
 // A version_sync doc under an independently-versioned package is checked against *that*
@@ -47,11 +58,12 @@ func TestCheckPerPackage(t *testing.T) {
 		{Path: "README.md", Patterns: []string{"repo at {VERSION}"}},
 		{Path: "packages/api/README.md", Patterns: []string{"api at {VERSION}"}},
 	}
-	res := NewResolver(config.Project{
-		CanonicalVersion: "1.0.0",
-		Versioning:       "semver",
-		Packages:         []config.PackageVersion{{Path: "packages/api", Version: "2.5.0"}},
-	})
+	res := treeResolver(t, `schema: "2"
+version: "1.0.0"
+versioning: semver
+directories:
+  packages/api: { version: "2.5.0" }
+`)
 	drifts, err := Check(fsys, res, files)
 	if err != nil {
 		t.Fatal(err)

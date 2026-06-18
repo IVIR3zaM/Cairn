@@ -8,17 +8,18 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"sort"
 	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
 )
 
-// Config is the whole cairn.yaml aggregate. See docs/ARCHITECTURE.md for the schema.
+// Config is the legacy (schema-1) flat aggregate. The per-directory model (schema 2) is the
+// Tree in tree.go; this type survives as the shape the legacy-translation path unmarshals into
+// (its tool/standard knobs become the Tree baseline) and as the in-code Default() source.
+// See docs/ARCHITECTURE.md for the schema.
 type Config struct {
 	Version     string              `yaml:"version"`
-	Project     Project             `yaml:"project"`
 	Languages   map[string]Language `yaml:"languages"`
 	Verify      Verify              `yaml:"verify"`
 	Commits     Commits             `yaml:"commits"`
@@ -29,41 +30,10 @@ type Config struct {
 	Addons      Addons              `yaml:"addons"`
 }
 
-// Project carries the canonical version (source of truth for version-sync) and scheme.
-// Packages, when present, declares a monorepo whose units version independently; an empty
-// list (the default) means the whole repo follows the single canonical_version.
-type Project struct {
-	CanonicalVersion string           `yaml:"canonical_version"`
-	Versioning       string           `yaml:"versioning"`
-	Packages         []PackageVersion `yaml:"packages,omitempty"`
-}
-
-// PackageVersion declares one independently-versioned package in a monorepo: a path
-// (relative to the repo root) carrying its own version line, optionally on its own
-// versioning scheme. It overrides project.canonical_version for units under Path, so a
-// mixed-language repo can hold a Java module and a Dart package on separate version lines.
-// Resolving a detected unit to its PackageVersion is the version.Resolver's job (6g-ii);
-// this is purely the declared schema.
-type PackageVersion struct {
-	Path       string `yaml:"path"`
-	Version    string `yaml:"version"`
-	Versioning string `yaml:"versioning,omitempty"`
-}
-
-// VersioningFor returns the effective scheme for a package: its own override when set,
-// otherwise the project-wide project.versioning. Single resolution point so callers never
-// re-derive the inherit-vs-override precedence (mirrors StrictFor).
-func (p PackageVersion) VersioningFor(projectScheme string) string {
-	if p.Versioning != "" {
-		return p.Versioning
-	}
-	return projectScheme
-}
-
-// Language is one detected/enabled language unit. Strict overrides the repo-wide
-// verify.strict default for just this language; nil (the absent case) inherits it.
+// Language is one language's tool/standard knobs (never its location — detection owns where
+// languages are). Strict overrides the repo-wide verify.strict default for just this language;
+// nil (the absent case) inherits it.
 type Language struct {
-	Dir      string `yaml:"dir"`
 	Enabled  bool   `yaml:"enabled"`
 	Standard string `yaml:"standard,omitempty"`
 	Strict   *bool  `yaml:"strict,omitempty"`
@@ -119,20 +89,10 @@ type Commits struct {
 	ValidateHook bool   `yaml:"validate_hook"`
 }
 
-// Changelog selects the changelog standard and file. Packages, when set, gives a
-// multi-package repo a second changelog style for each package's own CHANGELOG (pub.dev
-// best practice: every package keeps its own), discovered as <unit-dir>/<packages.file>
-// per detected unit — so `bump` promotes the root changelog and each package's in one pass.
+// Changelog selects the changelog standard and file. In the per-directory model an
+// independently-versioned directory carries its own changelog via its override block, so a
+// repo-wide `packages` style is no longer needed here.
 type Changelog struct {
-	Standard string            `yaml:"standard"`
-	File     string            `yaml:"file"`
-	Packages *PackageChangelog `yaml:"packages,omitempty"`
-}
-
-// PackageChangelog is the per-package changelog style for a multi-package repo: its standard
-// (often "dart"'s plain `## Unreleased` headings rather than the root's bracketed Keep a
-// Changelog ones) and the filename to look for inside each detected package directory.
-type PackageChangelog struct {
 	Standard string `yaml:"standard"`
 	File     string `yaml:"file"`
 }
@@ -174,7 +134,6 @@ type Addons struct {
 func Default() *Config {
 	return &Config{
 		Version:   "1",
-		Project:   Project{Versioning: "semver"},
 		Languages: map[string]Language{},
 		Verify: Verify{
 			Format:    Step{Enabled: true, Required: true, Mode: "check"},
@@ -201,7 +160,6 @@ func Load(path string) (*Config, error) {
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("parse config %s: %w", path, err)
 	}
-	cfg.normalize()
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid config %s: %w", path, err)
 	}
@@ -216,20 +174,6 @@ func LoadOrDefault(path string) (*Config, error) {
 	return Load(path)
 }
 
-// normalize fills small structural defaults that depend on user input, e.g. an
-// enabled language with no dir defaults to ".".
-func (c *Config) normalize() {
-	for name, lang := range c.Languages {
-		if lang.Enabled && lang.Dir == "" {
-			lang.Dir = "."
-			c.Languages[name] = lang
-		}
-	}
-	if c.Changelog.Packages != nil && c.Changelog.Packages.File == "" {
-		c.Changelog.Packages.File = "CHANGELOG.md"
-	}
-}
-
 // Validate reports every problem at once with an actionable message.
 func (c *Config) Validate() error {
 	var problems []string
@@ -240,17 +184,11 @@ func (c *Config) Validate() error {
 	if c.Version != "1" {
 		add("version: unsupported %q (expected \"1\")", c.Version)
 	}
-	if !oneOf(c.Project.Versioning, "semver", "calver") {
-		add("project.versioning: %q is not one of [semver calver]", c.Project.Versioning)
-	}
 	if !oneOf(c.Commits.Convention, "conventional", "gitmoji", "none") {
 		add("commits.convention: %q is not one of [conventional gitmoji none]", c.Commits.Convention)
 	}
 	if !oneOf(c.Changelog.Standard, "keepachangelog", "dart", "git-cliff", "conventional-changelog") {
 		add("changelog.standard: %q is not one of [keepachangelog dart git-cliff conventional-changelog]", c.Changelog.Standard)
-	}
-	if pc := c.Changelog.Packages; pc != nil && !oneOf(pc.Standard, "keepachangelog", "dart", "git-cliff", "conventional-changelog") {
-		add("changelog.packages.standard: %q is not one of [keepachangelog dart git-cliff conventional-changelog]", pc.Standard)
 	}
 	for _, s := range []struct {
 		name string
@@ -263,22 +201,6 @@ func (c *Config) Validate() error {
 	if c.Verify.Timeout != "" {
 		if _, err := time.ParseDuration(c.Verify.Timeout); err != nil {
 			add("verify.timeout: %q is not a valid duration (e.g. \"90s\", \"5m\")", c.Verify.Timeout)
-		}
-	}
-	for _, name := range sortedKeys(c.Languages) {
-		if c.Languages[name].Enabled && c.Languages[name].Dir == "" {
-			add("languages.%s.dir: must not be empty when enabled", name)
-		}
-	}
-	for i, p := range c.Project.Packages {
-		if strings.TrimSpace(p.Path) == "" {
-			add("project.packages[%d].path: must not be empty", i)
-		}
-		if strings.TrimSpace(p.Version) == "" {
-			add("project.packages[%d].version: must not be empty (each package carries its own version)", i)
-		}
-		if p.Versioning != "" && !oneOf(p.Versioning, "semver", "calver") {
-			add("project.packages[%d].versioning: %q is not one of [semver calver]", i, p.Versioning)
 		}
 	}
 
@@ -295,13 +217,4 @@ func oneOf(v string, allowed ...string) bool {
 		}
 	}
 	return false
-}
-
-func sortedKeys(m map[string]Language) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
 }

@@ -135,52 +135,15 @@ func TestRunBumpEmptyChangelogFails(t *testing.T) {
 	}
 }
 
-// TestRunBumpPromotesPerPackageChangelogs proves the multi-package edge case: with
-// changelog.packages set, a repo-wide bump promotes the root changelog (Keep a Changelog style)
-// and each detected package's own changelog (plain dart style), each to the bumped version, and
-// an empty [Unreleased] in any one of them fails the whole bump.
-func TestRunBumpPromotesPerPackageChangelogs(t *testing.T) {
-	dir := t.TempDir()
-	writeFile(t, dir, "cairn.yaml",
-		"version: \"0.1.0\"\nchangelog:\n  standard: keepachangelog\n  file: CHANGELOG.md\n  packages:\n    standard: dart\n    file: CHANGELOG.md\n")
-	// A Dart pub workspace with two members, each keeping its own changelog.
-	writeFile(t, dir, "pubspec.yaml", "name: ws\nworkspace:\n  - pkg_a\n  - pkg_b\n")
-	writeFile(t, dir, "pkg_a/pubspec.yaml", "name: pkg_a\nversion: 0.1.0\nresolution: workspace\n")
-	writeFile(t, dir, "pkg_b/pubspec.yaml", "name: pkg_b\nversion: 0.1.0\nresolution: workspace\n")
-	root := writeFile(t, dir, "CHANGELOG.md", "# Changelog\n\n## [Unreleased]\n\n### Added\n- Root note.\n")
-	clA := writeFile(t, dir, "pkg_a/CHANGELOG.md", "# Changelog\n\n## Unreleased\n\n- Pkg A note.\n")
-	clB := writeFile(t, dir, "pkg_b/CHANGELOG.md", "# Changelog\n\n## Unreleased\n\n- Pkg B note.\n")
-
-	date := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
-	var out bytes.Buffer
-	if err := runBump(dir, loadTree(t, dir), "minor", date, &out, false, false); err != nil {
-		t.Fatalf("runBump: %v", err)
-	}
-	if got := read(t, root); !strings.Contains(got, "## [0.2.0] - 2024-06-01") {
-		t.Errorf("root changelog not promoted (Keep a Changelog style): %s", got)
-	}
-	for name, cl := range map[string]string{"pkg_a": clA, "pkg_b": clB} {
-		if got := read(t, cl); !strings.Contains(got, "## 0.2.0 - 2024-06-01") {
-			t.Errorf("%s changelog not promoted (dart style): %s", name, got)
-		}
-	}
-
-	// Emptying one package's Unreleased fails the whole bump.
-	writeFile(t, dir, "pkg_b/CHANGELOG.md", "# Changelog\n\n## Unreleased\n\n## 0.2.0 - 2024-06-01\n\n- Pkg B note.\n")
-	out.Reset()
-	err := runBump(dir, loadTree(t, dir), "minor", date, &out, false, false)
-	if err == nil || !strings.Contains(err.Error(), "pkg_b/CHANGELOG.md") {
-		t.Fatalf("expected refusal naming pkg_b's empty changelog, got err=%v", err)
-	}
-}
-
-// TestRunPackageBumpPromotesOnlyItsChangelog proves the "bump one package" case: with
-// independently-versioned directories, `bump <pkg>` promotes only that package's changelog (and
-// leaves the root changelog and the other package's changelog alone).
+// TestRunPackageBumpPromotesOnlyItsChangelog proves the "bump one package" case in the
+// per-directory model: each independently-versioned directory keeps its own changelog via its
+// override block (here pkg_a overrides the standard to dart), and `bump <pkg>` promotes only
+// that package's changelog — at its own resolved version, leaving the root changelog and the
+// other package's changelog alone.
 func TestRunPackageBumpPromotesOnlyItsChangelog(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "cairn.yaml",
-		"version: \"0.0.0\"\nchangelog:\n  standard: keepachangelog\n  file: CHANGELOG.md\n  packages:\n    standard: dart\n    file: CHANGELOG.md\ndirectories:\n  pkg_a:\n    version: \"1.0.0\"\n  pkg_b:\n    version: \"2.0.0\"\n")
+		"version: \"0.0.0\"\nchangelog:\n  standard: keepachangelog\n  file: CHANGELOG.md\ndirectories:\n  pkg_a:\n    version: \"1.0.0\"\n    changelog:\n      standard: dart\n  pkg_b:\n    version: \"2.0.0\"\n")
 	writeFile(t, dir, "pkg_a/pubspec.yaml", "name: pkg_a\nversion: 1.0.0\n")
 	writeFile(t, dir, "pkg_b/pubspec.yaml", "name: pkg_b\nversion: 2.0.0\n")
 	root := writeFile(t, dir, "CHANGELOG.md", "# Changelog\n\n## [Unreleased]\n\n### Added\n- Root note.\n")
@@ -193,7 +156,7 @@ func TestRunPackageBumpPromotesOnlyItsChangelog(t *testing.T) {
 		t.Fatalf("runPackageBump: %v", err)
 	}
 	if got := read(t, clA); !strings.Contains(got, "## 1.1.0 - 2024-06-01") {
-		t.Errorf("pkg_a changelog not promoted: %s", got)
+		t.Errorf("pkg_a changelog not promoted (dart style, per-directory override): %s", got)
 	}
 	if got := read(t, clB); strings.Contains(got, "## 2") || !strings.Contains(got, "## Unreleased\n\n- Pkg B note.") {
 		t.Errorf("pkg_b changelog must be untouched: %s", got)

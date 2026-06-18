@@ -111,21 +111,60 @@ func parseRootTree(data []byte) (*Tree, error) {
 	return t, nil
 }
 
+// legacyProject is the dropped schema-1 `project:` block. It lives here, not on the Config
+// aggregate (10a-iii-c-iii removed it), so the legacy-translation path can still read a
+// `version: "1"` file's canonical version, scheme, and packages and translate them into the
+// schema-2 Tree — never silently misreading an old file.
+type legacyProject struct {
+	CanonicalVersion string          `yaml:"canonical_version"`
+	Versioning       string          `yaml:"versioning"`
+	Packages         []legacyPackage `yaml:"packages"`
+}
+
+type legacyPackage struct {
+	Path       string `yaml:"path"`
+	Version    string `yaml:"version"`
+	Versioning string `yaml:"versioning"`
+}
+
 // loadLegacyTree translates a `version: "1"` / `project:` config into the schema-2 Tree:
-// the legacy top-level keys become the baseline, and each project.packages entry becomes a
-// root directories.<path> override carrying its own version. Reuses the existing Load path
-// so legacy files keep their full validation and defaults.
+// the legacy top-level keys (validated via the Config aggregate) become the baseline, the
+// dropped project block is parsed on the side, and each project.packages entry becomes a
+// root directories.<path> override carrying its own version.
 func loadLegacyTree(data []byte) (*Tree, error) {
 	cfg := Default()
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("parse cairn.yaml: %w", err)
 	}
-	cfg.normalize()
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid cairn.yaml: %w", err)
 	}
+	var legacy struct {
+		Project legacyProject `yaml:"project"`
+	}
+	if err := yaml.Unmarshal(data, &legacy); err != nil {
+		return nil, fmt.Errorf("parse cairn.yaml: %w", err)
+	}
+	proj := legacy.Project
+	if proj.Versioning != "" && !oneOf(proj.Versioning, "semver", "calver") {
+		return nil, fmt.Errorf("invalid cairn.yaml: project.versioning: %q is not one of [semver calver]", proj.Versioning)
+	}
+
+	baseline := baselineFromConfig(cfg)
+	if proj.CanonicalVersion != "" {
+		baseline.Version = strPtr(proj.CanonicalVersion)
+	}
+	if proj.Versioning != "" {
+		baseline.Versioning = strPtr(proj.Versioning)
+	}
 	rootDirs := map[string]Directory{}
-	for _, p := range cfg.Project.Packages {
+	for i, p := range proj.Packages {
+		if strings.TrimSpace(p.Path) == "" || strings.TrimSpace(p.Version) == "" {
+			return nil, fmt.Errorf("invalid cairn.yaml: project.packages[%d]: path and version must not be empty", i)
+		}
+		if p.Versioning != "" && !oneOf(p.Versioning, "semver", "calver") {
+			return nil, fmt.Errorf("invalid cairn.yaml: project.packages[%d].versioning: %q is not one of [semver calver]", i, p.Versioning)
+		}
 		d := Directory{Version: strPtr(p.Version)}
 		if p.Versioning != "" {
 			d.Versioning = strPtr(p.Versioning)
@@ -133,17 +172,19 @@ func loadLegacyTree(data []byte) (*Tree, error) {
 		rootDirs[path.Clean(p.Path)] = d
 	}
 	return &Tree{
-		baseline: baselineFromConfig(cfg),
+		baseline: baseline,
 		rootDirs: rootDirs,
 		ownFiles: map[string]Directory{},
 		pruned:   map[string]bool{},
 	}, nil
 }
 
-// baselineFromConfig lifts a legacy/default Config's top-level keys into a Directory baseline
-// block (every section a pointer so "unset" inherits — though the baseline sets all of them).
+// baselineFromConfig lifts a Config's tool/standard knobs into a Directory baseline block
+// (every section a pointer so "unset" inherits — though the baseline sets all of them). The
+// baseline versioning defaults to semver; the legacy-translation path overrides version and
+// versioning from the dropped project block.
 func baselineFromConfig(cfg *Config) Directory {
-	d := Directory{
+	return Directory{
 		Languages:   cfg.Languages,
 		Verify:      &cfg.Verify,
 		Commits:     &cfg.Commits,
@@ -152,14 +193,8 @@ func baselineFromConfig(cfg *Config) Directory {
 		Hooks:       &cfg.Hooks,
 		CI:          &cfg.CI,
 		Addons:      &cfg.Addons,
+		Versioning:  strPtr("semver"),
 	}
-	if cfg.Project.CanonicalVersion != "" {
-		d.Version = strPtr(cfg.Project.CanonicalVersion)
-	}
-	if cfg.Project.Versioning != "" {
-		d.Versioning = strPtr(cfg.Project.Versioning)
-	}
-	return d
 }
 
 // discover walks fsys, recording each `<path>/cairn.yaml` override block. The absolute disable

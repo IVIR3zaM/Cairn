@@ -537,7 +537,7 @@ Tree-backed resolver (`NewResolverFromTree`); commits/changelog/version_sync com
 inference + guards + wizard); a single-package repo behaves exactly as before; `bump` contains no
 YAML-reading or precedence logic beyond its own cairn.yaml write-back.
 
-###### [ ] 10a-iii-c-iii — Drop legacy fields + `version.NewResolver`; reconcile ARCHITECTURE
+###### [x] 10a-iii-c-iii — Drop legacy fields + `version.NewResolver`; reconcile ARCHITECTURE
 **Read:** AGENTS.md · internal/config/{config,tree}.go · internal/version/resolver.go · docs/ARCHITECTURE.md
 **Steps:** Remove `project.*` (`Project`/`PackageVersion`), `changelog.packages`
 (`Changelog.Packages`/`PackageChangelog`), and `languages.*.dir` from the config aggregate (keep

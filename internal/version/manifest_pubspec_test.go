@@ -4,8 +4,6 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
-
-	"github.com/IVIR3zaM/Cairn/internal/config"
 )
 
 // SetVersion sets only the package's own version:, like every other manager; a versionless
@@ -111,11 +109,12 @@ func TestCheckWorkspacePerPackage(t *testing.T) {
 		{Dir: "signing", Manifests: []string{"pubspec.yaml"}},
 		{Dir: "app", Manifests: []string{"pubspec.yaml"}},
 	}
-	res := NewResolver(config.Project{
-		CanonicalVersion: "2.0.0",
-		Versioning:       "semver",
-		Packages:         []config.PackageVersion{{Path: "signing", Version: "3.0.0"}},
-	})
+	res := treeResolver(t, `schema: "2"
+version: "2.0.0"
+versioning: semver
+directories:
+  signing: { version: "3.0.0" }
+`)
 	drifts, err := CheckWorkspace(fsys, res, units)
 	if err != nil {
 		t.Fatal(err)
@@ -182,14 +181,13 @@ func TestCheckManifestsPerPackage(t *testing.T) {
 		{Dir: "api", Manifests: []string{"pubspec.yaml"}},
 		{Dir: "web", Manifests: []string{"pubspec.yaml"}},
 	}
-	res := NewResolver(config.Project{
-		CanonicalVersion: "2.0.0",
-		Versioning:       "semver",
-		Packages: []config.PackageVersion{
-			{Path: "api", Version: "4.2.0"},
-			{Path: "web", Version: "4.2.0"},
-		},
-	})
+	res := treeResolver(t, `schema: "2"
+version: "2.0.0"
+versioning: semver
+directories:
+  api: { version: "4.2.0" }
+  web: { version: "4.2.0" }
+`)
 	drifts, checked, err := CheckManifests(fsys, res, units)
 	if err != nil {
 		t.Fatal(err)

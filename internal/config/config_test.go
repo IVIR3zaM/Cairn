@@ -17,16 +17,14 @@ func writeConfig(t *testing.T, body string) string {
 	return path
 }
 
-// A full file is parsed faithfully across every section.
+// A full file is parsed faithfully across the flat aggregate's sections (the per-directory
+// version model — `project`, `directories` — lives in the Tree, tested in tree_test.go).
 func TestLoad_FullFile(t *testing.T) {
 	path := writeConfig(t, `
 version: "1"
-project:
-  canonical_version: "0.4.2"
-  versioning: calver
 languages:
-  go:     { dir: ".",  enabled: true }
-  python: { dir: "py", enabled: true, standard: ruff }
+  go:     { enabled: true }
+  python: { enabled: true, standard: ruff }
 verify:
   build: { enabled: true, required: false }
 version_sync:
@@ -36,9 +34,6 @@ version_sync:
 	cfg, err := Load(path)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
-	}
-	if cfg.Project.CanonicalVersion != "0.4.2" || cfg.Project.Versioning != "calver" {
-		t.Errorf("project = %+v", cfg.Project)
 	}
 	if cfg.Languages["python"].Standard != "ruff" {
 		t.Errorf("python standard = %q", cfg.Languages["python"].Standard)
@@ -52,8 +47,7 @@ version_sync:
 	}
 }
 
-// A minimal file gets every absent value filled from in-code defaults, and an
-// enabled language with no dir is normalized to ".".
+// A minimal file gets every absent value filled from in-code defaults.
 func TestLoad_MinimalFile_FillsDefaults(t *testing.T) {
 	path := writeConfig(t, `
 version: "1"
@@ -63,9 +57,6 @@ languages:
 	cfg, err := Load(path)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
-	}
-	if got := cfg.Languages["go"].Dir; got != "." {
-		t.Errorf("enabled go dir = %q, want \".\"", got)
 	}
 	if !cfg.Verify.Format.Enabled || cfg.Verify.Format.Mode != "check" {
 		t.Errorf("format defaults missing: %+v", cfg.Verify.Format)
@@ -85,15 +76,15 @@ languages:
 func TestLoad_InvalidFile_ActionableError(t *testing.T) {
 	path := writeConfig(t, `
 version: "1"
-project:
-  versioning: weekly
+commits:
+  convention: emoji-vibes
 `)
 	_, err := Load(path)
 	if err == nil {
-		t.Fatal("expected error for bad versioning")
+		t.Fatal("expected error for bad commit convention")
 	}
 	msg := err.Error()
-	for _, want := range []string{"project.versioning", "weekly", "semver", "calver"} {
+	for _, want := range []string{"commits.convention", "emoji-vibes", "conventional"} {
 		if !contains(msg, want) {
 			t.Errorf("error %q missing %q", msg, want)
 		}
@@ -162,63 +153,6 @@ func TestLoadOrDefault_MissingFile(t *testing.T) {
 	}
 	if cfg.Version != "1" || cfg.Changelog.Standard != "keepachangelog" {
 		t.Errorf("defaults not returned: %+v", cfg)
-	}
-}
-
-// A monorepo declares per-package versions: each entry parses, and VersioningFor resolves
-// the per-package scheme override against the project-wide default.
-func TestLoad_Packages_PerPackageVersions(t *testing.T) {
-	path := writeConfig(t, `
-version: "1"
-project:
-  canonical_version: "0.4.2"
-  versioning: semver
-  packages:
-    - { path: services/api, version: "2.1.0" }
-    - { path: pkgs/cli, version: "2025.6.0", versioning: calver }
-`)
-	cfg, err := Load(path)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	pkgs := cfg.Project.Packages
-	if len(pkgs) != 2 {
-		t.Fatalf("packages = %+v", pkgs)
-	}
-	if pkgs[0].Path != "services/api" || pkgs[0].Version != "2.1.0" {
-		t.Errorf("packages[0] = %+v", pkgs[0])
-	}
-	// absent override inherits project.versioning; explicit override wins.
-	if got := pkgs[0].VersioningFor(cfg.Project.Versioning); got != "semver" {
-		t.Errorf("packages[0] scheme = %q, want semver (inherited)", got)
-	}
-	if got := pkgs[1].VersioningFor(cfg.Project.Versioning); got != "calver" {
-		t.Errorf("packages[1] scheme = %q, want calver (override)", got)
-	}
-}
-
-// Each package entry must carry a non-empty path and version, and a scheme override (if
-// given) must be a known one — all reported in one actionable error.
-func TestLoad_Packages_InvalidEntries(t *testing.T) {
-	path := writeConfig(t, `
-version: "1"
-project:
-  packages:
-    - { path: "", version: "" }
-    - { path: pkgs/cli, version: "1.0.0", versioning: weekly }
-`)
-	_, err := Load(path)
-	if err == nil {
-		t.Fatal("expected error for invalid package entries")
-	}
-	msg := err.Error()
-	for _, want := range []string{
-		"project.packages[0].path", "project.packages[0].version",
-		"project.packages[1].versioning", "weekly",
-	} {
-		if !contains(msg, want) {
-			t.Errorf("error %q missing %q", msg, want)
-		}
 	}
 }
 

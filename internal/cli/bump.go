@@ -106,16 +106,6 @@ func resolvedCommits(tree *config.Tree) config.Commits {
 	return config.Default().Commits
 }
 
-// resolvedChangelog returns the repo baseline changelog config (including the per-package
-// `packages` style), falling back to the in-code defaults when no layer set it.
-func resolvedChangelog(tree *config.Tree) config.Changelog {
-	root, _ := tree.Resolve(".")
-	if root.Changelog != nil {
-		return *root.Changelog
-	}
-	return config.Default().Changelog
-}
-
 // resolvedVersionSyncFiles returns the repo baseline version_sync files, or none when unset.
 func resolvedVersionSyncFiles(tree *config.Tree) []config.VersionSyncFile {
 	root, _ := tree.Resolve(".")
@@ -239,7 +229,8 @@ func runPackageBump(wd string, tree *config.Tree, pkgArg, arg string, now time.T
 	}
 	cur := versioning.NewResolverFromTree(tree).ForDir(dir)
 	curVer, next, err := computeNextFrom(
-		fmt.Sprintf("directories.%s.version", dir), cur.Version, cur.Versioning, arg, now, force)
+		fmt.Sprintf("directories.%s.version", dir), cur.Version, cur.Versioning, arg, now, force,
+	)
 	if err != nil {
 		return err
 	}
@@ -801,72 +792,54 @@ func planChangelogs(wd string, tree *config.Tree, plan bumpPlan) ([]changelogWri
 	return writes, nil
 }
 
-// changelogTargets lists the changelogs a bump promotes: the root changelog (repo-wide bumps
-// only — a package-scoped bump leaves it alone) plus, when changelog.packages is configured,
-// each package's own changelog discovered as <unit-dir>/<file>. A repo-wide bump covers every
-// detected package; a package-scoped bump covers only the bumped package. Each is resolved to
-// its own target version via the plan's resolver, and the root file is never double-targeted.
-func changelogTargets(wd string, tree *config.Tree, plan bumpPlan) ([]changelogTarget, error) {
-	cl := resolvedChangelog(tree)
-	var targets []changelogTarget
-	seen := map[string]bool{}
-	add := func(t changelogTarget) {
-		if !seen[t.file] {
-			seen[t.file] = true
-			targets = append(targets, t)
+// changelogTargets lists the changelogs a bump promotes. A repo-wide bump promotes the repo
+// baseline changelog (lockstep units share it). A package-scoped bump promotes only the bumped
+// directory's own changelog (resolved via its per-directory override block — its own standard
+// and file, falling back to the baseline), at that package's resolved version — leaving the
+// root and the other packages alone. This is the schema-2 successor to the old
+// changelog.packages style: a directory keeps its own changelog through its override block.
+func changelogTargets(_ string, tree *config.Tree, plan bumpPlan) ([]changelogTarget, error) {
+	if plan.label == "" {
+		cl := resolvedDirChangelog(tree, ".")
+		if cl.File == "" {
+			return nil, nil
 		}
+		return []changelogTarget{{file: cl.File, standard: cl.Standard, version: plan.next}}, nil
 	}
-	if plan.label == "" && cl.File != "" {
-		add(changelogTarget{file: cl.File, standard: cl.Standard, version: plan.next})
+	dir := plan.label
+	lit := plan.res.ForDir(dir).Version
+	if lit == "" {
+		return nil, nil
 	}
-	pc := cl.Packages
-	if pc == nil {
-		return targets, nil
-	}
-	dirs, err := changelogPackageDirs(wd, tree, plan)
+	v, err := versioning.Parse(lit)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("version for %s: %w", dir, err)
 	}
-	for _, dir := range dirs {
-		lit := plan.res.ForDir(dir).Version
-		if lit == "" {
-			continue
-		}
-		v, err := versioning.Parse(lit)
-		if err != nil {
-			return nil, fmt.Errorf("version for %s: %w", dir, err)
-		}
-		add(changelogTarget{
-			file:     filepath.ToSlash(filepath.Join(dir, pc.File)),
-			standard: pc.Standard,
-			version:  v,
-		})
+	cl := resolvedDirChangelog(tree, dir)
+	if cl.File == "" {
+		return nil, nil
 	}
-	return targets, nil
+	return []changelogTarget{{
+		file:     filepath.ToSlash(filepath.Join(dir, cl.File)),
+		standard: cl.Standard,
+		version:  v,
+	}}, nil
 }
 
-// changelogPackageDirs lists the package directories whose changelogs a bump touches: just the
-// bumped package for a package-scoped bump, or every detected unit (auto-discovered, no config)
-// for a repo-wide one — mirroring how manifests are discovered from detection rather than dirs
-// listed in cairn.yaml.
-func changelogPackageDirs(wd string, tree *config.Tree, plan bumpPlan) ([]string, error) {
-	if plan.label != "" {
-		return []string{plan.label}, nil
-	}
-	langs, err := detectedEnabled(wd, tree)
-	if err != nil {
-		return nil, err
-	}
-	var dirs []string
-	seen := map[string]bool{}
-	for _, lang := range langs {
-		d := path.Clean(lang.Dir)
-		if !seen[d] {
-			seen[d] = true
-			dirs = append(dirs, d)
+// resolvedDirChangelog returns dir's effective changelog (standard + file) from the Tree's
+// cascade, filling any field a partial override left unset from the in-code defaults — so a
+// directory that overrides only `changelog.standard` still resolves a file, and vice versa.
+func resolvedDirChangelog(tree *config.Tree, dir string) config.Changelog {
+	cl := config.Default().Changelog
+	if d, ok := tree.Resolve(dir); ok && d.Changelog != nil {
+		if d.Changelog.Standard != "" {
+			cl.Standard = d.Changelog.Standard
+		}
+		if d.Changelog.File != "" {
+			cl.File = d.Changelog.File
 		}
 	}
-	return dirs, nil
+	return cl
 }
 
 // detectedEnabled returns the detected languages minus any pruned by the disable gate or
