@@ -488,7 +488,7 @@ model (no dropped field survives in the doc); the precedence subsection states t
 absolute disable, and own-`version`⇒independent; 10a-iii-b/-c need no further ARCHITECTURE edits beyond
 spot reconciliation. Docs-only; build untouched.
 
-##### [ ] 10a-iii-b — Refit `verify` to resolve per-directory via the Tree
+##### [x] 10a-iii-b — Refit `verify` to resolve per-directory via the Tree
 **Read:** AGENTS.md · internal/config/tree.go · internal/cli/verify.go · internal/version/resolver.go
 **Steps:** `verify` builds a `config.Tree` and resolves each detected unit's settings (languages
 standard/strict, version_sync, enabled gate, target version) via `Tree.Resolve` + the Tree-backed

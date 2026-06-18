@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -134,11 +135,15 @@ func newVerifyCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			cfg, err := config.LoadOrDefault("cairn.yaml")
+			fsys := os.DirFS(wd)
+			// config owns the per-directory cascade: verify asks the Tree for each unit's
+			// resolved settings (languages standard/strict, verify toggles, version_sync,
+			// enabled gate, target version) and never re-derives precedence itself.
+			tree, err := config.LoadTree(fsys)
 			if err != nil {
 				return err
 			}
-			res, err := detect.Detect(os.DirFS(wd), lookupTool)
+			res, err := detect.Detect(fsys, lookupTool)
 			if err != nil {
 				return err
 			}
@@ -164,28 +169,32 @@ func newVerifyCmd() *cobra.Command {
 			obs := &liveObserver{rep: rep}
 			var all []quality.Result
 			for _, lang := range res.Languages {
+				resolved, active := tree.Resolve(lang.Dir)
+				if !active {
+					continue // directory pruned by the absolute disable gate
+				}
 				standard := ""
-				if l, ok := cfg.Languages[lang.Name]; ok {
+				if l, ok := resolved.Languages[lang.Name]; ok {
 					standard = l.Standard
 				}
 				adapter, ok := quality.AdapterFor(lang.Name, run, standard)
 				if !ok {
 					continue // no adapter registered for this language yet
 				}
-				if l, ok := cfg.Languages[lang.Name]; ok && !l.Enabled {
+				if l, ok := resolved.Languages[lang.Name]; ok && !l.Enabled {
 					continue // explicitly disabled in cairn.yaml
 				}
-				results := quality.Run(context.Background(), cfg.Verify, adapter,
+				results := quality.Run(context.Background(), resolved.VerifyOrDefault(), adapter,
 					// Force tool color only when streaming to a color TTY (verbose); piped or
 					// NO_COLOR runs stay clean so captured output never carries escape codes.
-					quality.LangUnit{Name: lang.Name, Dir: lang.Dir, Color: verbose && opts.Color, Strict: cfg.StrictFor(lang.Name), Fix: fix},
+					quality.LangUnit{Name: lang.Name, Dir: lang.Dir, Color: verbose && opts.Color, Strict: resolved.StrictFor(lang.Name), Fix: fix},
 					toolInfo(lang), obs)
 				all = append(all, results...)
 			}
 
 			// version_sync honesty check (Cairn's signature): every documented version must
 			// quote the canonical one. A drift fails verify just like a quality stage.
-			syncFailed, err := checkVersionSync(wd, cfg, rep, obs)
+			syncFailed, err := checkVersionSync(fsys, tree, rep, obs)
 			if err != nil {
 				rep.Error(err)
 				return errSilent
@@ -194,7 +203,7 @@ func newVerifyCmd() *cobra.Command {
 			// Same honesty check, language-owned: every detected manifest (Cargo.toml,
 			// package.json, pyproject.toml, pubspec.yaml, …) must state the canonical
 			// version — drift in the files bump writes fails verify, no version_sync needed.
-			manifestsFailed, err := checkManifestSync(wd, cfg, res, rep, obs)
+			manifestsFailed, err := checkManifestSync(fsys, tree, res, rep, obs)
 			if err != nil {
 				rep.Error(err)
 				return errSilent
@@ -218,12 +227,17 @@ func newVerifyCmd() *cobra.Command {
 // report step appended after the language stages. It returns whether any doc drifted (so
 // verify exits non-zero) and surfaces config/read errors. With no version_sync configured
 // it adds no step at all, keeping the summary clean for projects that don't use it.
-func checkVersionSync(wd string, cfg *config.Config, rep report.Reporter, obs *liveObserver) (bool, error) {
-	if len(cfg.VersionSync.Files) == 0 {
+func checkVersionSync(fsys fs.FS, tree *config.Tree, rep report.Reporter, obs *liveObserver) (bool, error) {
+	root, _ := tree.Resolve(".")
+	var files []config.VersionSyncFile
+	if root.VersionSync != nil {
+		files = root.VersionSync.Files
+	}
+	if len(files) == 0 {
 		return false, nil
 	}
-	res := versioning.NewResolver(cfg.Project)
-	drifts, err := versioning.Check(os.DirFS(wd), res, cfg.VersionSync.Files)
+	res := versioning.NewResolverFromTree(tree)
+	drifts, err := versioning.Check(fsys, res, files)
 	if err != nil {
 		return false, err
 	}
@@ -234,11 +248,20 @@ func checkVersionSync(wd string, cfg *config.Config, rep report.Reporter, obs *l
 			reasons[i] = d.Reason()
 		}
 		step.Status = report.Fail
-		step.Detail = strings.Join(reasons, "\n") + versionFixHint(cfg.Project.CanonicalVersion)
+		step.Detail = strings.Join(reasons, "\n") + versionFixHint(rootVersion(root))
 	}
 	rep.Step(step)
 	obs.steps = append(obs.steps, step)
 	return step.Status == report.Fail, nil
+}
+
+// rootVersion is the repo baseline version (the `.` resolution), used to name the resync
+// command in a drift hint. Empty when no baseline version is configured.
+func rootVersion(root config.Directory) string {
+	if root.Version != nil {
+		return *root.Version
+	}
+	return ""
 }
 
 // versionFixHint points a version drift at the command that rewrites every doc and manifest
@@ -254,16 +277,15 @@ func versionFixHint(canonical string) string {
 // manifest drifted, and surfaces config errors. When nothing version-bearing is found (no
 // canonical, or a repo whose languages own no writable manifest) it adds no step, keeping
 // the summary clean for projects this doesn't apply to.
-func checkManifestSync(wd string, cfg *config.Config, res *detect.Result, rep report.Reporter, obs *liveObserver) (bool, error) {
-	if cfg.Project.CanonicalVersion == "" && len(cfg.Project.Packages) == 0 {
-		return false, nil // no version configured anywhere — nothing to assert
-	}
+func checkManifestSync(fsys fs.FS, tree *config.Tree, res *detect.Result, rep report.Reporter, obs *liveObserver) (bool, error) {
 	units := make([]versioning.ManifestUnit, 0, len(res.Languages))
 	for _, lang := range res.Languages {
 		units = append(units, versioning.ManifestUnit{Dir: lang.Dir, Manifests: lang.VersionManifests})
 	}
-	resolver := versioning.NewResolver(cfg.Project)
-	drifts, checked, err := versioning.CheckManifests(os.DirFS(wd), resolver, units)
+	// The Tree-backed resolver answers each unit's target version from the cascade; a unit
+	// with no version resolves to empty and is skipped, so an unversioned repo asserts nothing.
+	resolver := versioning.NewResolverFromTree(tree)
+	drifts, checked, err := versioning.CheckManifests(fsys, resolver, units)
 	if err != nil {
 		return false, err
 	}
@@ -271,7 +293,7 @@ func checkManifestSync(wd string, cfg *config.Config, res *detect.Result, rep re
 	// a sibling at `^X.Y.Z`) that must track each member's version — a stale pin looks honest to
 	// the per-file version: check above. The workspace pass catches it generically: any manifest
 	// format that opts into version.Workspace participates, no language named here.
-	wsDrifts, err := versioning.CheckWorkspace(os.DirFS(wd), resolver, units)
+	wsDrifts, err := versioning.CheckWorkspace(fsys, resolver, units)
 	if err != nil {
 		return false, err
 	}
@@ -285,8 +307,9 @@ func checkManifestSync(wd string, cfg *config.Config, res *detect.Result, rep re
 		for i, d := range drifts {
 			reasons[i] = d.Reason()
 		}
+		root, _ := tree.Resolve(".")
 		step.Status = report.Fail
-		step.Detail = strings.Join(reasons, "\n") + versionFixHint(cfg.Project.CanonicalVersion)
+		step.Detail = strings.Join(reasons, "\n") + versionFixHint(rootVersion(root))
 	}
 	rep.Step(step)
 	obs.steps = append(obs.steps, step)

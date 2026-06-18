@@ -72,6 +72,27 @@ func overlay(base, over Directory) Directory {
 	return out
 }
 
+// VerifyOrDefault returns this resolved directory's verify stage config, falling back to
+// the in-code defaults when no layer set it. The CLI reads it instead of re-deriving the
+// cascade, so verify carries no precedence logic of its own.
+func (d Directory) VerifyOrDefault() Verify {
+	if d.Verify != nil {
+		return *d.Verify
+	}
+	return Default().Verify
+}
+
+// StrictFor reports the effective strictness for a language in this resolved directory:
+// the per-language override (languages.<name>.strict) when set, otherwise the resolved
+// verify.strict default. The Tree-resolved mirror of Config.StrictFor — a single
+// resolution point so the CLI never re-derives the inherit-vs-override precedence.
+func (d Directory) StrictFor(lang string) bool {
+	if l, ok := d.Languages[lang]; ok && l.Strict != nil {
+		return *l.Strict
+	}
+	return d.VerifyOrDefault().Strict
+}
+
 // cascade folds layers low → high so the nearest (last) layer that sets a field wins and
 // any field no layer sets stays unset. Callers pass the precedence order (repo baseline,
 // then own-file ancestors outer→inner, then root directories.<path> ancestors) and read

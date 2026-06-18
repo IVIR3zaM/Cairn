@@ -165,6 +165,43 @@ project:
 	}
 }
 
+// StrictFor resolves per-directory strictness through the cascade so the CLI never re-derives
+// precedence: the repo baseline default applies where nothing overrides, a directory override
+// raises it, and a per-language strict override beats the directory's verify.strict default.
+func TestResolve_StrictForCascade(t *testing.T) {
+	fsys := fstest.MapFS{
+		"cairn.yaml": &fstest.MapFile{Data: []byte(`
+schema: "2"
+version: "1.0.0"
+verify: { strict: false }
+directories:
+  pkg_a: { verify: { strict: true } }
+  pkg_b:
+    verify: { strict: true }
+    languages: { go: { strict: false } }
+`)},
+	}
+	tr, err := LoadTree(fsys)
+	if err != nil {
+		t.Fatalf("LoadTree: %v", err)
+	}
+	root, _ := tr.Resolve(".")
+	if root.StrictFor("go") {
+		t.Error("root StrictFor(go) = true, want false (baseline default)")
+	}
+	a, _ := tr.Resolve("pkg_a")
+	if !a.StrictFor("go") {
+		t.Error("pkg_a StrictFor(go) = false, want true (directory verify.strict override)")
+	}
+	b, _ := tr.Resolve("pkg_b")
+	if b.StrictFor("go") {
+		t.Error("pkg_b StrictFor(go) = true, want false (per-language strict beats directory default)")
+	}
+	if !b.StrictFor("rust") {
+		t.Error("pkg_b StrictFor(rust) = false, want true (no per-language override → directory default)")
+	}
+}
+
 // An unknown schema is rejected with an actionable error rather than silently misread.
 func TestLoadTree_UnknownSchemaRejected(t *testing.T) {
 	fsys := fstest.MapFS{

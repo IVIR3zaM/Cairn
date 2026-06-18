@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- `cairn verify` now resolves each detected unit's settings through the per-directory config
+  `Tree` (10a-iii-b): languages standard/strict, verify stage toggles, version_sync, the absolute
+  disable gate, and the target version all come from `Tree.Resolve` + `version.NewResolverFromTree`,
+  so the CLI carries no precedence logic of its own (`Config.LoadOrDefault`/`StrictFor`/`cfg.Project`
+  reads dropped). New `Directory.VerifyOrDefault`/`StrictFor` mirror the cascade; single-package
+  repos behave exactly as before.
+- ARCHITECTURE.md now documents the per-directory config model (10a-iii-doc): the `cairn.yaml`
+  schema block was rewritten to the schema-`"2"` shape (repo baseline as plain top-level keys +
+  a `directories:` map of override blocks, `languages` tool-knobs-only, the `schema:` format
+  marker), a "Per-directory config & precedence" subsection captures the field-level low→high
+  cascade (baseline < own-file < root `directories.<path>`), the absolute disable gate, and
+  own-`version`⇒independent versioning, and the data-flow + ADR-003 were reconciled so the
+  source-of-truth doc matches the implemented `config.Directory`/`Tree` model. Docs-only.
+
 ### Added
 - `version.NewResolverFromTree` (10a-iii-a): build a `version.Resolver` over the resolved
   per-directory config `Tree` so `ForDir` answers each unit's target version + scheme from config's
