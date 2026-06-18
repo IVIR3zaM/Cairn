@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Wiring context (`internal/wiring`): install Cairn into a repo so the local hook and CI share one
+  `cairn verify` (ADR-005). `InstallHooks` writes the configured git hooks (`hooks.pre_commit`/
+  `commit_msg`/`pre_push`) as executable POSIX-sh scripts into a tracked `.cairn/hooks` dir and
+  points git at it via `core.hooksPath` (commit-msg forwards the message file path); CI providers
+  are a self-registering registry (`wiring.ProviderFor`/`Providers`) with `github` as the first
+  entry, generating `.github/workflows/cairn.yml` that runs each `ci.jobs` step. Both installs are
+  idempotent; other CI providers are future one-file additions.
 - Per-package bump inference (monorepo): `cairn bump <pkg>` with no level infers that package's
   level from the commits that touched its directory since its own `<pkg>-v*` tag (degrading to the
   package's whole history when untagged), then advances only it. The no-argument flow in a

@@ -314,7 +314,7 @@ histories each infer their own level (a `feat:` touching only pkg_a infers `mino
 `none` for pkg_b); a package with no tag yet degrades to whole-history; a repo with only
 `canonical_version` behaves exactly as 8b (repo-wide inference unchanged).
 
-## [ ] 9 — Wiring: hooks + CI generation
+## [x] 9 — Wiring: hooks + CI generation
 **Goal:** `init`'s outputs — install git hooks and generate a CI workflow calling `verify`.
 **Read:** AGENTS.md · docs/ARCHITECTURE.md (Wiring, extension points) · internal/config
 **Steps:** Install pre-commit (`cairn verify`) and optional commit-msg hooks via a tracked
