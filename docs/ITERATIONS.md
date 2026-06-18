@@ -324,8 +324,83 @@ first entry — other providers are later one-file additions, not a `switch`.
 **Acceptance:** Hooks installed and runnable; generated GitHub workflow is valid and runs
 `cairn verify`; re-running is idempotent; `ProviderFor("github")` resolves via self-registration.
 
-## [ ] 10 — Onboarding wizard (`init`)
-**Goal:** The headline UX: a fast, friendly `cairn init`.
+## 10 — Per-directory config + onboarding wizard (split)
+**Goal:** Collapse the four overlapping path-shapes (`languages.*.dir`, `project.packages`,
+`changelog.packages`, `version_sync.files`) into **one** `directories:` map of override blocks,
+let any directory carry its **own `cairn.yaml`** (same override block), and make *all* cascade,
+precedence, and disable resolution a concern of the **`config` module** — then build `cairn init`
+on top. Split: **10a** is the config refactor + new schema + ARCHITECTURE update; **10b** is the
+`init` wizard (the original iteration 10).
+
+### [ ] 10a — Per-directory config model (config owns the cascade)
+**Goal:** One unified per-directory override model, resolved entirely inside `config`. The CLI
+contexts stop reading `cairn.yaml`/walking dirs themselves and instead ask `config` for the
+resolved settings of a directory (and whether it is active). This is the schema and the resolver;
+no `init` wizard yet.
+**Read:** AGENTS.md · docs/ARCHITECTURE.md (Config + schema, Versioning, Detection) ·
+internal/config/config.go · internal/version/resolver.go · internal/cli/{verify,bump}.go · internal/detect/detect.go
+**Decisions to encode (agreed):**
+- **Repo baseline = root top-level keys.** Whole-repo settings live as plain top-level keys in the
+  root `cairn.yaml` (`version`, `versioning`, `languages` tool knobs, `verify`, `commits`,
+  `changelog`, `version_sync`, `hooks`, `ci`, `addons`). There is **no `.` entry** — the top level
+  *is* the repo.
+- **`languages` holds tool/standard knobs only — never locations** (`python: { standard: ruff }`,
+  `dart: { strict: true }`). Detection owns "where languages are." `languages.*.dir` is removed.
+- **One `directories:` map**, keyed by repo-relative path, each value an **override block**. This
+  single map replaces `project.packages`, `changelog.packages`, and `version_sync.files`. An empty/
+  absent `directories:` ⇒ detect everything, repo follows the single top-level `version` (lockstep).
+- **The override block is one type, reused in three forms:** (1) the root file = override block
+  (baseline) + optional `directories:`; (2) a root `directories.<path>` entry = override block;
+  (3) a `<path>/cairn.yaml` = override block. Root-inline and nested-file are two serializations of
+  the *identical* type — design it once.
+- **Overrides cover everything**, not just version: any key valid at the repo baseline can be
+  overridden per directory (versioning, version, languages knobs, verify toggles/strict, commits,
+  changelog, version_sync).
+- **Independent vs lockstep is a consequence, not a mode:** a directory with its own `version:` is
+  independently versioned (own tag `<dir>-v<version>`, own changelog); without one it inherits the
+  repo `version` (lockstep). This subsumes today's `project.packages`/canonical split.
+- **Precedence is field-level, layered low → high:**
+  1. repo baseline (root top-level keys);
+  2. the directory's own `cairn.yaml` — and any ancestor's own file, outer → inner, nearest wins;
+  3. root `directories.<path>` entries — and ancestors, outer → inner, nearest wins — **highest
+     authority.**
+  So an explicit root per-directory override **beats** that directory's own `cairn.yaml`; where the
+  root is silent for a directory, the directory's own file governs. Worked examples:
+  - root `directories.somerepo` sets `dart.strict: true`, `somerepo/cairn.yaml` says not-strict ⇒
+    **strict** (layer 3 over layer 2).
+  - root has strict only at the top level, **no** `directories.somerepo` entry, `somerepo/cairn.yaml`
+    says not-strict ⇒ **not-strict** (layer 2 over layer 1; layer 3 empty).
+- **Absolute disable gate, evaluated before any merge or file read:** a root
+  `directories.<path>.enabled: false` (or any disabled ancestor) prunes the whole subtree — its own
+  `cairn.yaml` is never read, no detection, no verify, nothing under it runs.
+- **`config` owns the complexity. CLI does not.** `config` discovers nested `cairn.yaml` files,
+  applies the disable gate + cascade, and exposes a resolved-view API (e.g. `Resolve(dir)` →
+  effective settings, plus enumeration of active/pruned directories). `verify`/`bump`/`detect` ask
+  `config` for resolved settings instead of re-deriving precedence or reading YAML themselves.
+**Steps:**
+- Define the `Directory` override block type (the repo-level keys, all optional/pointer where
+  "unset means inherit") and a top-level `Directories map[string]Directory`; keep `version: "1"`
+  as the only mandatory key. Treat this as a **breaking schema change** — bump the config schema to
+  `version: "2"`, accept-and-translate `"1"` where cheap or fail with an actionable migration note
+  (decide in-slice; do not silently misread an old file).
+- Move `version`/`versioning` to top-level repo baseline; drop `project.canonical_version`,
+  `project.packages`, `changelog.packages`, `version_sync.files`, `languages.*.dir`.
+- Implement the resolver inside `config`: nested-file discovery, the disable gate, and the
+  field-level low→high cascade above; provide the resolved-view + active-directory enumeration API.
+- Refit existing callers: `version.Resolver`, `verify`, `bump`, and detection consume the new
+  `config` API; remove their direct precedence/`packages` logic. Keep behavior equivalent for a
+  single-package repo (no `directories:` ⇒ exactly today's lockstep).
+- Update **docs/ARCHITECTURE.md**: rewrite the config-schema block to the new shape, add a
+  "per-directory config & precedence" subsection (the layered model, absolute disable, own-`version`
+  ⇒ independent, config-owns-cascade), and reconcile the Versioning/Detection sections + ADRs.
+**Acceptance:** the new schema parses (root baseline + `directories:` map + a directory's own
+`cairn.yaml`); the two precedence examples resolve as specified; a root-disabled directory is pruned
+and its own `cairn.yaml` is never read; a single-package repo with no `directories:` behaves exactly
+as before; the cascade lives in `config` (CLI contexts contain no YAML-reading or precedence logic);
+ARCHITECTURE matches. Tested in the `config` package.
+
+### [ ] 10b — Onboarding wizard (`init`)
+**Goal:** The headline UX: a fast, friendly `cairn init`, on top of the 10a config model.
 **Read:** AGENTS.md · docs/ARCHITECTURE.md (Onboarding, extension points) · internal/{detect,config,wiring,report}
 **Steps:** Detect → show findings → multiselect features + standards (smart defaults from
 detection) → write `cairn.yaml` → run Wiring → print next steps. `--yes` non-interactive.
