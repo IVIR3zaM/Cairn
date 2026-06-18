@@ -202,6 +202,42 @@ directories:
 	}
 }
 
+// Independent lists exactly the directories that declare their own version — whether via a root
+// directories.<path> entry or via the directory's own cairn.yaml — and excludes ones that only
+// inherit the baseline and any pruned subtree, sorted. It is bump's schema-2 replacement for
+// project.packages, so it must reflect the cascade's "own version ⇒ independent" rule.
+func TestTree_Independent(t *testing.T) {
+	fsys := fstest.MapFS{
+		"cairn.yaml": &fstest.MapFile{Data: []byte(`
+schema: "2"
+version: "1.0.0"
+directories:
+  pkg_b: { version: "2.0.0" }
+  pkg_c: { verify: { strict: true } }
+  vendored: { enabled: false }
+`)},
+		// pkg_a is independent via its own file; pkg_c only overrides verify (inherits version).
+		"pkg_a/cairn.yaml": &fstest.MapFile{Data: []byte("version: \"0.5.0\"\n")},
+		"pkg_c/cairn.yaml": &fstest.MapFile{Data: []byte("commits: { signoff: true }\n")},
+		// A disabled subtree declaring a version must still be excluded (never read / pruned).
+		"vendored/cairn.yaml": &fstest.MapFile{Data: []byte("version: \"9.9.9\"\n")},
+	}
+	tr, err := LoadTree(fsys)
+	if err != nil {
+		t.Fatalf("LoadTree: %v", err)
+	}
+	got := tr.Independent()
+	want := []string{"pkg_a", "pkg_b"}
+	if len(got) != len(want) {
+		t.Fatalf("Independent() = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("Independent() = %v, want %v", got, want)
+		}
+	}
+}
+
 // An unknown schema is rejected with an actionable error rather than silently misread.
 func TestLoadTree_UnknownSchemaRejected(t *testing.T) {
 	fsys := fstest.MapFS{

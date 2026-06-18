@@ -237,6 +237,34 @@ func (t *Tree) Active() []string {
 	return out
 }
 
+// Independent lists the directories that declare their own version: ones whose own override
+// layer (a root directories.<path> entry or that directory's own cairn.yaml) sets `version`,
+// making them independently versioned (own tag/changelog) rather than inheriting the repo
+// baseline (lockstep). It is the schema-2 successor to project.packages — bump enumerates the
+// release units from it and reads each unit's target version/scheme via Resolve(dir), instead
+// of walking a config list. Sorted, and excluding any directory pruned by the disable gate.
+func (t *Tree) Independent() []string {
+	seen := map[string]bool{}
+	for p, d := range t.rootDirs {
+		if d.Version != nil {
+			seen[path.Clean(p)] = true
+		}
+	}
+	for p, d := range t.ownFiles {
+		if d.Version != nil {
+			seen[path.Clean(p)] = true
+		}
+	}
+	var out []string
+	for p := range seen {
+		if !t.pruned[p] {
+			out = append(out, p)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 // Pruned lists the directories cut by the absolute disable gate, sorted.
 func (t *Tree) Pruned() []string {
 	out := make([]string, 0, len(t.pruned))

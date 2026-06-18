@@ -23,6 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   source-of-truth doc matches the implemented `config.Directory`/`Tree` model. Docs-only.
 
 ### Added
+- `config.Tree.Independent()` (10a-iii-c-i): lists the directories that declare their own
+  `version` (a root `directories.<path>` entry or the directory's own `cairn.yaml`), sorted and
+  excluding pruned subtrees — the schema-2 successor to `project.packages` that `bump` will
+  enumerate release units from. Purely additive; no caller changes.
 - `version.NewResolverFromTree` (10a-iii-a): build a `version.Resolver` over the resolved
   per-directory config `Tree` so `ForDir` answers each unit's target version + scheme from config's
   cascade (a pruned directory yields an empty Target). The legacy `NewResolver(project)` constructor

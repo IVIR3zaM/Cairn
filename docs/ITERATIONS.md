@@ -496,15 +496,56 @@ resolver, dropping its direct `cfg.Project`/`cfg.VersionSync`/`StrictFor` reads.
 **Acceptance:** per-directory honesty + strict resolution flow through the Tree; single-package repo
 behaves as before; CLI verify contains no precedence logic.
 
-##### [ ] 10a-iii-c — Refit `bump` + drop legacy fields
-**Read:** AGENTS.md · internal/cli/bump.go · internal/config/{config,tree}.go · internal/detect/detect.go
-**Steps:** `bump` and detection consume the Tree; remove the dropped fields (`project.*`,
-`changelog.packages`, `version_sync.files`, `languages.*.dir`) and the legacy resolver constructor.
-(The ARCHITECTURE rewrite moved to 10a-iii-doc; here, only spot-reconcile the doc if a field name or
-behavior changed during the refit.)
+##### 10a-iii-c — Refit `bump` + drop legacy fields (split)
+**Goal:** `bump` and detection consume the Tree; remove the dropped fields (`project.*`,
+`changelog.packages`, `languages.*.dir`) and the legacy resolver constructor.
 **Acceptance:** the cascade lives in `config` (CLI contexts contain no YAML-reading or precedence
 logic); a single-package repo with no `directories:` behaves exactly as before; ARCHITECTURE still
 matches the code.
+
+> This slice grew past one clean run: `bump` cannot even *load* a schema-2 file today (it uses the
+> legacy `config.Load`, which requires `version: "1"`), so the refit is a full verify-style rewrite
+> of every function in the ~1000-line `bump.go` plus its 24KB legacy-schema test, and only *then*
+> the field drop. Per its own "if one grows, split it" note it is split below: **10a-iii-c-i** adds
+> the `config.Tree` enumeration of independently-versioned directories that `bump` needs to replace
+> `cfg.Project.Packages` (purely additive — build stays green, no caller changes); **10a-iii-c-ii**
+> refits `bump` (+ detection) onto the Tree (load via `LoadTree`, baseline `version:` read/write,
+> per-directory `directories.<path>.version` write-back, Tree-backed resolver for manifests/
+> version_sync/changelog/workspace); **10a-iii-c-iii** drops the legacy fields (`project.*`,
+> `changelog.packages`, `languages.*.dir`) + the legacy `version.NewResolver` constructor and
+> spot-reconciles ARCHITECTURE.
+
+###### [x] 10a-iii-c-i — `config.Tree` enumeration of independently-versioned directories
+**Read:** AGENTS.md · internal/config/{tree,directory}.go
+**Steps:** Add `Tree.Independent()` — the sorted, non-pruned directories whose **own** override
+layer (a root `directories.<path>` entry or that directory's own `cairn.yaml`) sets `version`,
+making them independently versioned. This is the schema-2 successor to `project.packages`: `bump`
+enumerates release units from it (and reads each unit's target version/scheme via `Resolve(dir)`)
+instead of a config list. Purely additive — no caller changes, legacy fields untouched.
+**Acceptance:** in the `config` package, `Independent()` lists exactly the dirs that declare their
+own `version` (root entry or own file), excludes ones that only inherit the baseline, excludes
+pruned subtrees, and is sorted; build + existing tests stay green.
+
+###### [ ] 10a-iii-c-ii — Refit `bump` (+ detection) onto the Tree
+**Read:** AGENTS.md · internal/cli/bump.go · internal/cli/verify.go (Tree-consuming template) · internal/config/{tree,directory}.go · internal/version/resolver.go · internal/detect/detect.go
+**Steps:** `bump`'s `RunE` loads a `config.Tree` (like `verify`); the repo-wide path reads/writes the
+baseline `version:` key; the per-package path enumerates `Tree.Independent()` and writes back to
+`directories.<path>.version`; manifests/version_sync/changelog/workspace resolve through the
+Tree-backed resolver (`NewResolverFromTree`); commits/changelog/version_sync come from the resolved
+`Directory`. Migrate `bump_test.go` to the schema-2 fixtures.
+**Acceptance:** every existing bump behavior holds on schema-2 fixtures (repo-wide + per-package +
+inference + guards + wizard); a single-package repo behaves exactly as before; `bump` contains no
+YAML-reading or precedence logic beyond its own cairn.yaml write-back.
+
+###### [ ] 10a-iii-c-iii — Drop legacy fields + `version.NewResolver`; reconcile ARCHITECTURE
+**Read:** AGENTS.md · internal/config/{config,tree}.go · internal/version/resolver.go · docs/ARCHITECTURE.md
+**Steps:** Remove `project.*` (`Project`/`PackageVersion`), `changelog.packages`
+(`Changelog.Packages`/`PackageChangelog`), and `languages.*.dir` from the config aggregate (keep
+`languages.<name>` tool knobs and the legacy-translation path in `tree.go`), drop the legacy
+`version.NewResolver(config.Project)` constructor, update `Validate`/`normalize`/tests, and
+spot-reconcile ARCHITECTURE for any field-name/behavior drift.
+**Acceptance:** the dropped fields no longer exist on the aggregate; the only resolver constructor is
+`NewResolverFromTree`; build + tests green; ARCHITECTURE matches.
 
 ### [ ] 10b — Onboarding wizard (`init`)
 **Goal:** The headline UX: a fast, friendly `cairn init`, on top of the 10a config model.
