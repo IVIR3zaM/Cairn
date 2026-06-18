@@ -17,3 +17,7 @@ func (pyproject) Filename() string { return "pyproject.toml" }
 func (pyproject) SetVersion(content []byte, v Version) ([]byte, bool, error) {
 	return setVia(content, tomlVersion, v, `version in pyproject.toml`)
 }
+
+func (pyproject) ReadVersion(content []byte) (Version, bool) {
+	return readVia(content, tomlVersion)
+}

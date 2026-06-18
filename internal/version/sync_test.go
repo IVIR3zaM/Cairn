@@ -3,6 +3,7 @@ package version
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"testing/fstest"
 
@@ -144,4 +145,51 @@ func TestCheckBadCanonical(t *testing.T) {
 	if _, err := Check(fstest.MapFS{}, lockstep("nope"), files); err == nil {
 		t.Error("malformed canonical version should error")
 	}
+}
+
+func TestDetectSyncPatterns(t *testing.T) {
+	doc := "# proj\n\n" +
+		"coordinate mylib:1.2.3 and badge version-1.2.3-blue here.\n" +
+		"wrapped `proj@1.2.3`. v1.2.3 standalone, plain 1.2.3 in prose.\n" +
+		"unrelated 11.2.33 and 1.2.30 stay untouched.\n"
+
+	got := DetectSyncPatterns(doc, "1.2.3")
+
+	// Distinctive surrounding tokens become patterns; the version number is replaced by the
+	// placeholder and outer wrappers/punctuation are trimmed.
+	for _, w := range []string{"mylib:{VERSION}", "version-{VERSION}-blue", "proj@{VERSION}"} {
+		if !contains(got, w) {
+			t.Errorf("missing pattern %q in %q", w, got)
+		}
+	}
+	// A bare or merely v-prefixed number in prose is too generic to track.
+	for _, bad := range []string{"{VERSION}", "v{VERSION}"} {
+		if contains(got, bad) {
+			t.Errorf("over-generic pattern %q should be rejected: %q", bad, got)
+		}
+	}
+	// Longer numbers that merely embed the version must never produce a pattern.
+	for _, p := range got {
+		if strings.Contains(p, "11.2.33") || strings.Contains(p, "1.2.30") {
+			t.Errorf("version embedded in a longer number leaked into a pattern: %q", p)
+		}
+	}
+}
+
+func TestDetectSyncPatternsEmpty(t *testing.T) {
+	if got := DetectSyncPatterns("no versions here", "1.2.3"); got != nil {
+		t.Errorf("want nil for a doc without the version, got %q", got)
+	}
+	if got := DetectSyncPatterns("anything 1.2.3", ""); got != nil {
+		t.Errorf("want nil for an empty version, got %q", got)
+	}
+}
+
+func contains(ss []string, want string) bool {
+	for _, s := range ss {
+		if s == want {
+			return true
+		}
+	}
+	return false
 }

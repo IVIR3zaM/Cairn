@@ -15,3 +15,7 @@ func (npm) Filename() string { return "package.json" }
 func (npm) SetVersion(content []byte, v Version) ([]byte, bool, error) {
 	return setVia(content, npmVersion, v, `"version" in package.json`)
 }
+
+func (npm) ReadVersion(content []byte) (Version, bool) {
+	return readVia(content, npmVersion)
+}

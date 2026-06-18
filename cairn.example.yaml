@@ -1,53 +1,68 @@
-# cairn.yaml — example configuration (annotated).
-# `cairn init` generates one of these for you by detecting your repo. This file documents
-# every option; a real cairn.yaml only needs the parts that differ from the defaults.
+# cairn.yaml — annotated example (schema 2).
+#
+# `cairn init` does NOT write a file like this. Init is *smart*, not exhaustive: it writes only
+# what it positively discovered about your repo — the real project version (read from your
+# pom/package.json/Cargo/pyproject/pubspec), the languages it detected, the version_sync patterns
+# it actually found in your README, and a commits policy inferred from your git history. Every
+# other setting lives as an in-code default, so an omitted key behaves exactly as shown below
+# without cluttering your file. A real cairn.yaml only needs the parts that DIFFER from these
+# defaults (plus whatever init discovered for you).
+#
+# This file documents every option and the per-directory model. See docs/ARCHITECTURE.md.
 
-version: "1"
+schema: "2"                       # config *format* version (not the project version);
+                                  # absent ⇒ "2". A legacy `version: "1"` / `project:` file is
+                                  # still accepted and translated.
 
-project:
-  canonical_version: "0.1.0"   # the source of truth for version-sync
-  versioning: semver           # semver | calver
+# --- repo baseline: plain top-level keys; apply everywhere unless a directory overrides ---
 
-# Auto-detected; edit to add/remove or to pin a per-language "standard".
+version: "0.1.0"                  # the repo's project version: the source of truth for
+                                  # version-sync. A directory that sets its own `version`
+                                  # versions independently; otherwise it rides this (lockstep).
+                                  # `cairn init` seeds this from your real manifest (a pom's
+                                  # <version>, package.json "version", Cargo/pyproject/pubspec).
+versioning: semver                # semver | calver
+
+# Tool/standard knobs ONLY — never locations. Detection owns *where* languages are, so you do
+# not list languages to enable them; you only add a block to tune one. Omit it entirely to
+# accept detection + defaults (what init does).
 languages:
-  go:
-    dir: "."
-    enabled: true
   python:
-    dir: "py"
-    enabled: true
-    standard: ruff             # ruff | black+flake8
+    standard: ruff               # ruff | black+flake8
   dart:
-    dir: "."
-    enabled: true
-    strict: true               # per-language override of verify.strict; omit to inherit
-  # java | ts | rust blocks look the same (dir, enabled, optional standard/strict)
+    strict: true                 # per-language override of verify.strict; omit to inherit
+  # go | java | ts | rust blocks look the same (optional standard/strict)
 
-# The unified gate. Each step: enabled + required (hard-fail vs warn+skip when the tool
-# is missing). `mode: check` means non-mutating (used in hooks/CI).
+# The unified gate. Each step: enabled + required (hard-fail vs warn+skip when the tool is
+# missing). `mode: check` means non-mutating (used in hooks/CI).
 verify:
   format:    { enabled: true,  required: true,  mode: check }
   lint:      { enabled: true,  required: true }
   typecheck: { enabled: true,  required: false }
   test:      { enabled: true,  required: true }
   build:     { enabled: false }
-  # strict: promote the most lenient diagnostics to failures wherever the linter
-  # has a warning/info tier — dart `analyze --fatal-infos`, eslint `--max-warnings=0`,
-  # biome `--error-on-warnings`. The repo-wide default; override per language above.
+  # strict: promote the most lenient diagnostics to failures wherever the linter has a
+  # warning/info tier — dart `analyze --fatal-infos`, eslint `--max-warnings=0`, biome
+  # `--error-on-warnings`. The repo-wide default; override per language above.
   # Linters that already fail on every finding (go, rust, python, java) are unaffected.
   strict: false
+  timeout: 5m                    # per-stage deadline so a hung tool fails instead of freezing
 
 commits:
-  convention: conventional     # conventional | gitmoji | none
-  signoff: false               # require DCO Signed-off-by
-  validate_hook: true          # install a commit-msg hook that enforces the convention
+  convention: conventional       # conventional | gitmoji | none
+  signoff: false                 # require a DCO Signed-off-by trailer. `cairn init` sets this
+                                 # from your history (on when sign-off is the norm), never blindly.
+  validate_hook: true            # install a commit-msg hook that enforces the convention
 
 changelog:
-  standard: keepachangelog     # keepachangelog | git-cliff | conventional-changelog
+  standard: keepachangelog       # keepachangelog | dart | git-cliff | conventional-changelog
   file: CHANGELOG.md
 
-# Cairn's signature check: these doc snippets must advertise canonical_version.
+# Cairn's signature check: these doc snippets must advertise the project version.
 # {VERSION} is the placeholder. `cairn verify` fails if they drift; `cairn bump` rewrites them.
+# `cairn init` seeds this for you by scanning the README for the places your version actually
+# appears (badges, dependency coordinates, install snippets) and recording the distinctive
+# surrounding text as patterns — so doc-honesty is wired up from the first run.
 version_sync:
   files:
     - path: README.md
@@ -61,7 +76,7 @@ hooks:
   pre_push: []
 
 ci:
-  provider: github             # github (others later)
+  provider: github               # github (others later)
   jobs: [verify]
 
 # Optional cross-cutting standards — all off unless you opt in.
@@ -69,3 +84,19 @@ addons:
   editorconfig: false
   license_header: false
   branch_name: false
+
+# --- per-directory overrides: the SAME override block, keyed by repo-relative path ---
+# Optional and sparse. Absent ⇒ detect everything; the whole repo follows the baseline
+# `version` (lockstep). A directory can equivalently carry its own `<path>/cairn.yaml` holding
+# the identical block (without the `directories:` key).
+directories:
+  services/api:                  # independently versioned: own tag services/api-v2.1.0, own
+    version: "2.1.0"             # changelog. Overrides ANY baseline key, not just version.
+    verify: { test: { required: false } }
+  pkgs/cli:
+    version: "2025.6.0"
+    versioning: calver           # its own scheme
+    changelog: { standard: dart }
+  vendor:
+    enabled: false               # absolute disable: vendor's own cairn.yaml is never read,
+                                 # never detected, never verified — nothing under it runs.

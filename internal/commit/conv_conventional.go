@@ -32,6 +32,12 @@ var breakingFooterRe = regexp.MustCompile(`(?m)^BREAKING[ -]CHANGE: .+`)
 // signoffRe matches a DCO `Signed-off-by: Name <email>` trailer.
 var signoffRe = regexp.MustCompile(`(?m)^Signed-off-by: .+ <.+>`)
 
+// IsSignedOff reports whether msg carries a DCO `Signed-off-by:` trailer. It is exposed so
+// onboarding (`cairn init`) can learn from history whether sign-off is the repo's norm and set
+// commits.signoff accordingly, reusing the exact trailer definition the validator enforces —
+// one source of truth for "what counts as signed off".
+func IsSignedOff(msg string) bool { return signoffRe.MatchString(msg) }
+
 // header returns the regex submatches for msg's first line, or nil when it doesn't conform.
 func (conventional) header(msg string) []string {
 	line := strings.SplitN(strings.TrimSpace(msg), "\n", 2)[0]

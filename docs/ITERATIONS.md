@@ -332,7 +332,7 @@ precedence, and disable resolution a concern of the **`config` module** — then
 on top. Split: **10a** is the config refactor + new schema + ARCHITECTURE update; **10b** is the
 `init` wizard (the original iteration 10).
 
-### [~] 10a — Per-directory config model (config owns the cascade)
+### [x] 10a — Per-directory config model (config owns the cascade)
 **Goal:** One unified per-directory override model, resolved entirely inside `config`. The CLI
 contexts stop reading `cairn.yaml`/walking dirs themselves and instead ask `config` for the
 resolved settings of a directory (and whether it is active). This is the schema and the resolver;
@@ -547,15 +547,35 @@ spot-reconcile ARCHITECTURE for any field-name/behavior drift.
 **Acceptance:** the dropped fields no longer exist on the aggregate; the only resolver constructor is
 `NewResolverFromTree`; build + tests green; ARCHITECTURE matches.
 
-### [ ] 10b — Onboarding wizard (`init`)
+## 10b — Onboarding wizard (`init`) (split)
 **Goal:** The headline UX: a fast, friendly `cairn init`, on top of the 10a config model.
-**Read:** AGENTS.md · docs/ARCHITECTURE.md (Onboarding, extension points) · internal/{detect,config,wiring,report}
+The standards/providers come from the registries (changelog/commit/CI), so a newly
+registered standard appears without touching `init`. Split: **10b-i** is the
+non-interactive `--yes` core (detect → write a valid schema-2 `cairn.yaml` → run Wiring →
+print next steps) — the fully-testable spine; **10b-ii** is the interactive wizard (show
+findings → multiselect features + standards) on top of it.
+
+### [x] 10b-i — Non-interactive `cairn init --yes`
+**Read:** AGENTS.md · internal/config/{config,tree,directory}.go · internal/detect/detect.go · internal/wiring/{wiring,hooks}.go · internal/cli/{root,doctor,bump}.go
+**Steps:** `config.InitConfig(version, languages)` renders the schema-2 cairn.yaml bytes
+(repo baseline + detected languages enabled) + the equivalent `*Config` for Wiring (single
+source of the init shape, round-trips through `LoadTree`). `internal/cli/init.go` adds
+`cairn init [--yes]`: a testable `runInit(wd, out)` detects languages, writes `cairn.yaml`
+(kept untouched if one exists), reads hooks/CI from the resolved Tree, runs
+`wiring.InstallHooks`/`GenerateCI`, and prints next steps; the bare command (no `--yes`)
+errors pointing at `--yes` until 10b-ii lands the wizard.
+**Acceptance:** `cairn init --yes` in a sample repo writes a valid (LoadTree-parseable)
+schema-2 config listing the detected languages, installs runnable hooks, generates a CI
+workflow, and is non-destructive/idempotent (an existing cairn.yaml is kept).
+
+### [ ] 10b-ii — Interactive `init` wizard
+**Read:** AGENTS.md · docs/ARCHITECTURE.md (Onboarding, extension points) · internal/{detect,config,wiring,report} · internal/cli/init.go
 **Steps:** Detect → show findings → multiselect features + standards (smart defaults from
-detection) → write `cairn.yaml` → run Wiring → print next steps. `--yes` non-interactive.
-The choosable standards/providers come from the registries (changelog/commit/CI), so a
-newly registered standard appears in the wizard without touching it.
-**Acceptance:** `cairn init --yes` produces a valid config + hook + CI in a sample repo in
-seconds; interactive run is navigable and concise.
+detection; choices enumerated from the changelog/commit/CI registries) → write `cairn.yaml`
+via `config.InitConfig` → run Wiring → print next steps. Replace 10b-i's `--yes`-only gate
+with the interactive flow when a TTY is present.
+**Acceptance:** interactive run is navigable and concise; a newly registered standard appears
+as a choice without editing the wizard.
 
 ## [ ] 11 — Dogfood + docs polish
 **Goal:** Cairn uses Cairn; docs match reality.

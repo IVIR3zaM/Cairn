@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `cairn init --yes` (10b-i): non-interactive onboarding that detects languages, writes a valid
+  schema-2 `cairn.yaml` with the detected languages enabled (`config.InitConfig`, round-trips
+  through `LoadTree`), installs the configured git hooks, generates the CI workflow, and prints
+  next steps. Non-destructive — an existing `cairn.yaml` is kept. The interactive wizard is 10b-ii.
+- `cairn init` now seeds the new `cairn.yaml`'s `version:` from the project's real version instead
+  of a `0.1.0` placeholder: each manifest Manager gained a `ReadVersion` mirror of `SetVersion`,
+  and `version.DetectVersion` reads the first detected language manifest that declares a version
+  (a pom's `<version>`, a `package.json` `"version"`, Cargo/pyproject/pubspec, …), dropping a
+  Maven qualifier like `-SNAPSHOT`. So `cairn verify` agrees out of the box; it falls back to
+  `0.1.0` only when nothing declares a version.
+- `cairn init` detects the commit policy from git history instead of writing a blind default: it
+  enables `commits.signoff` only when DCO `Signed-off-by:` trailers are the norm across history
+  (new `commit.IsSignedOff` reuses the validator's trailer definition; `detectCommits` applies a
+  majority threshold). When sign-off is enabled it records a complete `commits` block (convention
+  included, since config resolves the block as a unit); otherwise the block is omitted.
+- `cairn init` auto-wires `version_sync` by scanning the README for the project's real version: a
+  new `version.DetectSyncPatterns` records the distinctive surrounding tokens (a badge, a
+  dependency coordinate like `group:artifact:{VERSION}`, an XML `<version>` snippet, an install
+  command) as `{VERSION}` patterns, while rejecting a bare or merely `v`-prefixed number in prose.
+  So Cairn's signature doc-honesty check runs from the very first `cairn verify`, no hand-written
+  patterns required.
+- Maven version manifest (`internal/version/manifest_pom.go`): a self-registering `pom.xml`
+  manager so `cairn verify` asserts the reactor root pom's own `<version>` against the configured
+  version and `cairn bump` writes it, preserving a trailing qualifier such as `-SNAPSHOT`. It
+  scans only the project-version region (after any `</parent>` block, before the first
+  dependencies/build/etc. section) so inherited and pinned versions are never touched; Java
+  detection now declares `versionManifests: ["pom.xml"]`. Multi-module child `<parent>`
+  reconciliation is a follow-up because Java detection is single-root.
+
+### Changed
+- `cairn init` now writes a **smart, discovered** `cairn.yaml` rather than a wall of defaults: it
+  records only the facts it positively determined — the detected `version`, the languages present
+  (each enabled, as an editable scaffold), the `version_sync` patterns found in the README, and a
+  `commits` block when history justifies one. Settings it cannot discover are omitted and ride the
+  in-code defaults via the resolved baseline, so an omitted key behaves identically without
+  cluttering the file. `InitConfig`'s signature changed to `InitConfig(base Directory) ([]byte,
+  error)` (the caller now assembles the discovered baseline; the unused `*Config` return was
+  dropped).
+- Rewrote `cairn.example.yaml` for schema 2 (top-level `version:`/`schema:`, the `languages`
+  block as tool/standard knobs, a `directories:` per-directory override section) and documented
+  that `init` writes a smart discovered file, not this fully-annotated reference.
+
 ### Removed
 - Dropped the legacy schema-1 fields from the `config` aggregate (10a-iii-c-iii): `project.*`
   (`Project`/`PackageVersion`), `changelog.packages` (`Changelog.Packages`/`PackageChangelog`),
@@ -17,6 +60,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   legacy `version.NewResolver(config.Project)` constructor; `NewResolverFromTree` is the only one.
 
 ### Fixed
+- The generated `commit-msg` hook called `cairn commit-lint "$@"`, but no such command existed,
+  so every commit aborted with "unknown command". Added the `commit-lint <message-file>` command:
+  it resolves the convention and sign-off requirement from the repo's `cairn.yaml` (per-directory
+  `Tree`), strips git's comment lines, and validates the message via `commit.ValidatorFor` — a
+  non-conforming message exits non-zero, an unregistered convention (e.g. `none`) never blocks.
+- Locked in that git actually fires the tracked-directory hooks: `TestInstalledHookFiresOnCommit`
+  installs hooks via `wiring.InstallHooks`, stubs `cairn` on `PATH`, and asserts a real `git
+  commit` runs `cairn verify` on the pass path and is blocked when the hook exits non-zero.
 - Schema-2 `cairn.yaml` baseline now starts from the in-code defaults, so a *partial* top-level
   block (e.g. `verify: { strict: true }`) merges field-by-field instead of wiping the stages it
   omits. Previously `parseRootTree` parsed the baseline from a zero value, silently disabling

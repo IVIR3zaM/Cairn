@@ -149,6 +149,75 @@ func TestInstallHooksWritesRunnableHooksAndSetsHooksPath(t *testing.T) {
 	}
 }
 
+// TestInstalledHookFiresOnCommit proves the whole wiring works end-to-end: with
+// core.hooksPath pointed at the tracked .cairn/hooks dir, git actually runs the installed
+// pre-commit on `git commit`, and a non-zero job aborts the commit. Regression guard for the
+// tracked-hooks-dir approach itself (a hook in .cairn/hooks must fire, not just exist).
+func TestInstalledHookFiresOnCommit(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	dir := t.TempDir()
+	gitInit(t, dir)
+	if out, err := runGit(dir, "config", "user.email", "t@t"); err != nil {
+		t.Fatalf("config email: %v: %s", err, out)
+	}
+	if out, err := runGit(dir, "config", "user.name", "t"); err != nil {
+		t.Fatalf("config name: %v: %s", err, out)
+	}
+	if _, err := InstallHooks(dir, config.Default()); err != nil {
+		t.Fatal(err)
+	}
+
+	// A stub `cairn` on PATH records that the hook invoked it; its exit code is controlled by
+	// a marker file so we can drive both the pass and fail paths.
+	binDir := filepath.Join(dir, "stubbin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ranLog := filepath.Join(dir, "ran.log")
+	failFlag := filepath.Join(dir, "FAIL")
+	stub := "#!/bin/sh\necho \"$@\" >> '" + ranLog + "'\n[ -f '" + failFlag + "' ] && exit 1\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(binDir, "cairn"), []byte(stub), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	commit := func(msg string) (string, error) {
+		writeFileWiring(t, dir, "f.txt", msg)
+		if out, err := runGit(dir, "add", "f.txt"); err != nil {
+			return out, err
+		}
+		cmd := exec.Command("git", "commit", "-m", msg)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+		out, err := cmd.CombinedOutput()
+		return string(out), err
+	}
+
+	// Pass path: the commit succeeds and the hook invoked `cairn verify`.
+	if out, err := commit("first"); err != nil {
+		t.Fatalf("commit should succeed: %v: %s", err, out)
+	}
+	if log, _ := os.ReadFile(ranLog); !strings.Contains(string(log), "verify") {
+		t.Fatalf("pre-commit hook did not run `cairn verify` (log=%q)", log)
+	}
+
+	// Fail path: a non-zero job aborts the commit.
+	if err := os.WriteFile(failFlag, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := commit("second"); err == nil {
+		t.Fatalf("commit should be blocked when the hook job fails, got success:\n%s", out)
+	}
+}
+
+func writeFileWiring(t *testing.T, dir, name, content string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func gitInit(t *testing.T, dir string) {
 	t.Helper()
 	if out, err := runGit(dir, "init"); err != nil {

@@ -36,6 +36,10 @@ func (pubspec) SetVersion(content []byte, v Version) ([]byte, bool, error) {
 	return setVia(content, pubspecVersion, v, "version in pubspec.yaml")
 }
 
+func (pubspec) ReadVersion(content []byte) (Version, bool) {
+	return readVia(content, pubspecVersion)
+}
+
 // PackageID implements Workspace: the member's own package name.
 func (pubspec) PackageID(content []byte) (string, bool) {
 	m := pubspecName.FindSubmatch(content)

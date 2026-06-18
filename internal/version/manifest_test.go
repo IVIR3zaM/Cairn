@@ -3,6 +3,7 @@ package version
 import (
 	"strings"
 	"testing"
+	"testing/fstest"
 )
 
 func TestSetVersion(t *testing.T) {
@@ -76,4 +77,66 @@ func TestRegisterDuplicatePanics(t *testing.T) {
 		}
 	}()
 	register(npm{}) // package.json already registered in init
+}
+
+// ReadVersion is SetVersion's mirror: it locates the project's own version across every
+// manifest format, dropping a Maven qualifier and skipping a manifest that declares none.
+func TestReadVersion(t *testing.T) {
+	cases := []struct {
+		file string
+		in   string
+		want string // empty means: no version locatable
+	}{
+		{"package.json", `{"name":"x","version":"1.2.3"}`, "1.2.3"},
+		{"Cargo.toml", "[package]\nname = \"x\"\nversion = \"0.9.0\"\n", "0.9.0"},
+		{"pyproject.toml", "[project]\nversion = \"1.0.0\"\n", "1.0.0"},
+		{"pubspec.yaml", "name: x\nversion: 2.3.4\n", "2.3.4"},
+		{"pom.xml", "<project><version>0.3.1-SNAPSHOT</version></project>", "0.3.1"},
+		{"package.json", `{"name":"x"}`, ""},                                            // no version
+		{"pom.xml", "<project><parent><version>3.2.0</version></parent></project>", ""}, // only a parent ref
+	}
+	for _, c := range cases {
+		m, ok := ManagerFor(c.file)
+		if !ok {
+			t.Fatalf("ManagerFor(%q) not registered", c.file)
+		}
+		v, ok := m.ReadVersion([]byte(c.in))
+		if c.want == "" {
+			if ok {
+				t.Errorf("%s: ReadVersion(%q) = %v, want no version", c.file, c.in, v)
+			}
+			continue
+		}
+		if !ok || v.String() != c.want {
+			t.Errorf("%s: ReadVersion(%q) = (%v, %v), want %s", c.file, c.in, v, ok, c.want)
+		}
+	}
+}
+
+func TestDetectVersion(t *testing.T) {
+	fsys := fstest.MapFS{
+		"backend/pom.xml":       {Data: []byte("<project><version>0.3.1-SNAPSHOT</version></project>")},
+		"frontend/package.json": {Data: []byte(`{"name":"web","version":"4.5.6"}`)},
+	}
+	// First unit with a locatable version wins, in order.
+	got, ok := DetectVersion(fsys, []ManifestUnit{
+		{Dir: "backend", Manifests: []string{"pom.xml"}},
+		{Dir: "frontend", Manifests: []string{"package.json"}},
+	})
+	if !ok || got != "0.3.1" {
+		t.Errorf("DetectVersion = (%q, %v), want 0.3.1", got, ok)
+	}
+}
+
+func TestDetectVersionFallsBackWhenNoneFound(t *testing.T) {
+	fsys := fstest.MapFS{
+		"go.mod":        {Data: []byte("module x\n")},                                                  // no registered manager
+		"child/pom.xml": {Data: []byte("<project><parent><version>1.0.0</version></parent></project>")}, // inheriting child, no own version
+	}
+	if got, ok := DetectVersion(fsys, []ManifestUnit{
+		{Dir: ".", Manifests: []string{"go.mod"}},
+		{Dir: "child", Manifests: []string{"pom.xml"}},
+	}); ok {
+		t.Errorf("DetectVersion = (%q, true), want no version found", got)
+	}
 }

@@ -160,3 +160,123 @@ func compile(pattern string) (*regexp.Regexp, error) {
 	}
 	return regexp.Compile(strings.Join(parts, "("+versionToken+")"))
 }
+
+// maxSyncToken caps the length of a discovered surrounding token, so a minified line or a
+// giant URL never becomes an unwieldy pattern.
+const maxSyncToken = 120
+
+// DetectSyncPatterns scans doc for the places the literal version appears and returns the
+// distinctive surrounding tokens as version_sync patterns — the number replaced by the
+// {VERSION} placeholder. It powers `cairn init`'s doc scan: rather than guessing, it records
+// where a version *actually* appears (a badge URL, an install snippet, a dependency
+// coordinate) so `cairn verify` keeps those honest from day one. A token is kept only when it
+// carries a letter of context beyond the bare (optionally v-prefixed) number, so a plain
+// "1.2.3" in prose never becomes a pattern that would match any version. Patterns are returned
+// in first-seen order, deduplicated; nil when nothing distinctive is found.
+func DetectSyncPatterns(doc, version string) []string {
+	if version == "" {
+		return nil
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, start := range literalIndexes(doc, version) {
+		end := start + len(version)
+		// A digit or dot on either side means this is part of a longer number (10.3.10
+		// contains 0.3.1), not a standalone version occurrence.
+		if isVersionByte(byteAt(doc, start-1)) || isVersionByte(byteAt(doc, end)) {
+			continue
+		}
+		ls, le := tokenSpan(doc, start, end)
+		ls, le = trimWrappers(doc, ls, le, start, end)
+		if le-ls > maxSyncToken {
+			continue
+		}
+		prefix, suffix := doc[ls:start], doc[end:le]
+		if !distinctiveContext(prefix, suffix) {
+			continue
+		}
+		pattern := prefix + placeholder + suffix
+		if !seen[pattern] {
+			seen[pattern] = true
+			out = append(out, pattern)
+		}
+	}
+	return out
+}
+
+// literalIndexes returns every start offset of sub in s.
+func literalIndexes(s, sub string) []int {
+	var idx []int
+	for off := 0; off <= len(s)-len(sub); {
+		i := strings.Index(s[off:], sub)
+		if i < 0 {
+			break
+		}
+		idx = append(idx, off+i)
+		off += i + len(sub)
+	}
+	return idx
+}
+
+// tokenSpan expands [start,end) outward to the surrounding whitespace-delimited token.
+func tokenSpan(s string, start, end int) (int, int) {
+	for start > 0 && !isSyncSpace(s[start-1]) {
+		start--
+	}
+	for end < len(s) && !isSyncSpace(s[end]) {
+		end++
+	}
+	return start, end
+}
+
+// syncTrim are the wrapper/sentence-punctuation bytes peeled off a token's outer edges so a
+// markdown-wrapped or punctuated occurrence yields a clean pattern (e.g. "`mylib:1.2.3`." →
+// "mylib:{VERSION}"). Interior coordinate punctuation (- _ / @ : .) is never trimmed, and
+// trimming stops at the version so a tiny "(1.2.3)" collapses to a non-distinctive bare number.
+const syncTrim = "`'\"()[]{}<>.,;:!?*"
+
+// trimWrappers peels syncTrim bytes off [ls,le)'s edges without crossing the version span
+// [start,end).
+func trimWrappers(s string, ls, le, start, end int) (int, int) {
+	for ls < start && isTrimByte(s[ls]) {
+		ls++
+	}
+	for le > end && isTrimByte(s[le-1]) {
+		le--
+	}
+	return ls, le
+}
+
+// distinctiveContext reports whether the literal text around a {VERSION} placeholder is
+// specific enough to be a useful pattern: after dropping a lone "v"/"V" version prefix, the
+// remaining context must contain a letter. This keeps "version-{VERSION}-blue" or
+// "mylib:{VERSION}" while rejecting a bare "{VERSION}", a generic "v{VERSION}", or a prose
+// "({VERSION})" that would match any version number.
+func distinctiveContext(prefix, suffix string) bool {
+	if n := len(prefix); n > 0 && (prefix[n-1] == 'v' || prefix[n-1] == 'V') {
+		prefix = prefix[:n-1]
+	}
+	return hasLetter(prefix) || hasLetter(suffix)
+}
+
+func byteAt(s string, i int) byte {
+	if i < 0 || i >= len(s) {
+		return 0
+	}
+	return s[i]
+}
+
+func isVersionByte(b byte) bool { return b == '.' || (b >= '0' && b <= '9') }
+
+func isSyncSpace(b byte) bool { return b == ' ' || b == '\t' || b == '\n' || b == '\r' }
+
+func isTrimByte(b byte) bool { return strings.IndexByte(syncTrim, b) >= 0 }
+
+func hasLetter(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if c := s[i]; (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') {
+			return true
+		}
+	}
+	return false
+}

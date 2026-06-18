@@ -23,6 +23,12 @@ type Manager interface {
 	// (false when already correct, so bump can skip an untouched file). It errors only
 	// when the manifest declares no version this manager can locate.
 	SetVersion(content []byte, v Version) ([]byte, bool, error)
+	// ReadVersion returns the project's own declared version (its numeric X.Y.Z core, any
+	// qualifier such as -SNAPSHOT dropped) and true, or false when the manifest declares no
+	// version this manager can locate (e.g. an inheriting child pom). It is the read mirror
+	// of SetVersion, used by `cairn init` to seed cairn.yaml from the real project version
+	// instead of a placeholder.
+	ReadVersion(content []byte) (Version, bool)
 }
 
 // managers maps a manifest filename to its writer, populated by each manifest_<name>.go
@@ -311,4 +317,46 @@ func setVia(content []byte, re *regexp.Regexp, v Version, what string) ([]byte, 
 	out = append(out, v.String()...)
 	out = append(out, content[end:]...)
 	return out, true, nil
+}
+
+// readVia reads the first capture group of re (the version literal) from content and parses
+// it, the read mirror of setVia. It reports false when re does not match or the literal is
+// not a clean X.Y.Z (e.g. a "v"-prefixed tag is accepted via Parse). It is the shared core
+// of every regex manager's ReadVersion: the manager supplies only its locating regex.
+func readVia(content []byte, re *regexp.Regexp) (Version, bool) {
+	loc := re.FindSubmatchIndex(content)
+	if loc == nil {
+		return Version{}, false
+	}
+	v, err := Parse(string(content[loc[2]:loc[3]]))
+	if err != nil {
+		return Version{}, false
+	}
+	return v, true
+}
+
+// DetectVersion returns the project's own declared version, as a string, read from the first
+// of the given units whose manifest a registered Manager can locate — so `cairn init` seeds
+// cairn.yaml from the real project version (a pom's <version>, a package.json's "version", …)
+// rather than a placeholder. Units are tried in order and, within a unit, manifests in their
+// declared order; the first locatable version wins. A missing file, an unregistered manifest,
+// or a manifest stating no own version is skipped. It reports false when nothing declares a
+// version, leaving the caller to fall back to its default.
+func DetectVersion(fsys fs.FS, units []ManifestUnit) (string, bool) {
+	for _, u := range units {
+		for _, fname := range u.Manifests {
+			m, ok := ManagerFor(fname)
+			if !ok {
+				continue
+			}
+			data, err := fs.ReadFile(fsys, path.Join(u.Dir, fname))
+			if err != nil {
+				continue
+			}
+			if v, ok := m.ReadVersion(data); ok {
+				return v.String(), true
+			}
+		}
+	}
+	return "", false
 }
