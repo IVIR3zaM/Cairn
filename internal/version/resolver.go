@@ -16,17 +16,28 @@ type Target struct {
 	Versioning string
 }
 
-// Resolver maps a detected unit (by directory) to the version it must carry. It honors
-// project.packages for a monorepo whose packages version independently and falls back to
-// project.canonical_version when no package entry covers the unit — lockstep is just the
-// degenerate case where every unit resolves to the one canonical version. Build it once
-// from project config and query it per unit; a workspace member is resolved by its own
-// directory too, so 6g-iii can turn detected members into a name→version map by running
-// each member's dir through ForDir.
+// Resolver maps a detected unit (by directory) to the version it must carry. Built from the
+// resolved per-directory config Tree (schema 2), it answers ForDir via Tree.Resolve, so
+// per-package vs lockstep is entirely the cascade's concern — config owns the precedence, not
+// the resolver. The legacy project-config constructor (NewResolver) is kept until verify/bump
+// migrate to the Tree; it honors project.packages for an independently-versioned monorepo and
+// falls back to project.canonical_version, lockstep being the degenerate all-equal case. Query
+// it once per unit; a workspace member is resolved by its own directory too.
 type Resolver struct {
+	tree *config.Tree // schema-2 per-directory model; when set, ForDir delegates to it
+
+	// legacy project-config fallback (used when tree is nil)
 	canonical string
 	scheme    string
 	packages  []config.PackageVersion
+}
+
+// NewResolverFromTree builds a Resolver over the resolved per-directory config Tree: each unit
+// dir resolves to its target version + scheme via Tree.Resolve, so the canonical-vs-per-package
+// precedence lives in config's cascade, not here. A dir pruned by the disable gate yields an
+// empty Target (no version to assert). This is the config-owns-the-cascade path the CLI adopts.
+func NewResolverFromTree(t *config.Tree) *Resolver {
+	return &Resolver{tree: t}
 }
 
 // NewResolver builds a Resolver from project config, cleaning each package path so a
@@ -50,6 +61,20 @@ func NewResolver(p config.Project) *Resolver {
 // scheme. A matching package's scheme is its own override or the inherited project scheme.
 func (r *Resolver) ForDir(dir string) Target {
 	dir = path.Clean(dir)
+	if r.tree != nil {
+		d, ok := r.tree.Resolve(dir)
+		if !ok {
+			return Target{} // pruned by the disable gate — no version to assert
+		}
+		t := Target{}
+		if d.Version != nil {
+			t.Version = *d.Version
+		}
+		if d.Versioning != nil {
+			t.Versioning = *d.Versioning
+		}
+		return t
+	}
 	best := -1
 	for i := range r.packages {
 		if !covers(r.packages[i].Path, dir) {

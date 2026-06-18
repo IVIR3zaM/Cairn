@@ -429,12 +429,44 @@ layered precedence (baseline < own-file ancestors < root `directories.<path>` an
 **Acceptance:** new schema parses; the two precedence examples resolve as specified; a root-disabled
 directory is pruned and its own `cairn.yaml` is never read; legacy single-package repo unchanged.
 
-#### [ ] 10a-iii — Refit callers + drop legacy fields + ARCHITECTURE rewrite
-**Read:** AGENTS.md · docs/ARCHITECTURE.md · internal/version/resolver.go · internal/cli/{verify,bump}.go · internal/detect/detect.go
-**Steps:** `version.Resolver`, `verify`, `bump`, and detection consume the new `config` API; remove
+#### 10a-iii — Refit callers + drop legacy fields + ARCHITECTURE rewrite (split)
+**Goal:** `version.Resolver`, `verify`, `bump`, and detection consume the new `config` API; remove
 their direct precedence/`packages` logic and the dropped fields (`project.*`, `changelog.packages`,
-`version_sync.files`, `languages.*.dir`). Rewrite the ARCHITECTURE config-schema block + add the
-per-directory precedence subsection; reconcile Versioning/Detection + ADRs.
+`version_sync.files`, `languages.*.dir`); rewrite the ARCHITECTURE config-schema block.
+**Acceptance:** the cascade lives in `config` (CLI contexts contain no YAML-reading or precedence
+logic); a single-package repo with no `directories:` behaves exactly as before; ARCHITECTURE matches.
+
+> This slice grew past one clean run (it migrates `version.Resolver`, refits the two large CLI files
+> `verify.go`/`bump.go`, drops legacy fields across the `config` package, and rewrites ARCHITECTURE).
+> Per its own "if one grows, split it" note it is split below: **10a-iii-a** makes `version.Resolver`
+> constructable from `config.Tree` (additive — the legacy `config.Project` constructor stays, build
+> green); **10a-iii-b** refits `verify` to resolve languages/strict/version_sync per-directory via the
+> Tree; **10a-iii-c** refits `bump`, drops the legacy fields, and rewrites ARCHITECTURE.
+
+##### [x] 10a-iii-a — `version.Resolver` constructable from `config.Tree`
+**Read:** AGENTS.md · internal/config/{config,tree,directory}.go · internal/version/resolver.go · internal/version/resolver_test.go
+**Steps:** Add `version.NewResolverFromTree(*config.Tree)` so a Resolver can answer `ForDir` from the
+resolved per-directory model (`Tree.Resolve(dir)` → version + scheme; a pruned dir yields an empty
+Target). Keep the legacy `NewResolver(config.Project)` constructor so `verify`/`bump` still build
+unchanged — this slice is purely additive.
+**Acceptance:** a Tree-backed resolver returns each unit's version/scheme from the cascade (root
+baseline lockstep + a `directories.<path>` override + a nested scheme override); the legacy
+constructor is unchanged; build and tests green.
+
+##### [ ] 10a-iii-b — Refit `verify` to resolve per-directory via the Tree
+**Read:** AGENTS.md · internal/config/tree.go · internal/cli/verify.go · internal/version/resolver.go
+**Steps:** `verify` builds a `config.Tree` and resolves each detected unit's settings (languages
+standard/strict, version_sync, enabled gate, target version) via `Tree.Resolve` + the Tree-backed
+resolver, dropping its direct `cfg.Project`/`cfg.VersionSync`/`StrictFor` reads.
+**Acceptance:** per-directory honesty + strict resolution flow through the Tree; single-package repo
+behaves as before; CLI verify contains no precedence logic.
+
+##### [ ] 10a-iii-c — Refit `bump` + drop legacy fields + ARCHITECTURE rewrite
+**Read:** AGENTS.md · docs/ARCHITECTURE.md · internal/cli/bump.go · internal/config/{config,tree}.go · internal/detect/detect.go
+**Steps:** `bump` and detection consume the Tree; remove the dropped fields (`project.*`,
+`changelog.packages`, `version_sync.files`, `languages.*.dir`) and the legacy resolver constructor;
+rewrite the ARCHITECTURE config-schema block + add the per-directory precedence subsection; reconcile
+Versioning/Detection + ADRs.
 **Acceptance:** the cascade lives in `config` (CLI contexts contain no YAML-reading or precedence
 logic); a single-package repo with no `directories:` behaves exactly as before; ARCHITECTURE matches.
 

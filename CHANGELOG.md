@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `version.NewResolverFromTree` (10a-iii-a): build a `version.Resolver` over the resolved
+  per-directory config `Tree` so `ForDir` answers each unit's target version + scheme from config's
+  cascade (a pruned directory yields an empty Target). The legacy `NewResolver(project)` constructor
+  stays until `verify`/`bump` migrate — purely additive.
 - Per-directory config loader (10a-ii): `config.LoadTree` reads the repo `cairn.yaml` (schema `"2"`,
   with the format marker moved to a `schema:` key and the top-level `version:` repurposed as the repo
   baseline version), discovers nested `<path>/cairn.yaml` override blocks, and resolves a directory's

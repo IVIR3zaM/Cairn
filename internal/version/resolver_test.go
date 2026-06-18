@@ -2,6 +2,7 @@ package version
 
 import (
 	"testing"
+	"testing/fstest"
 
 	"github.com/IVIR3zaM/Cairn/internal/config"
 )
@@ -61,6 +62,52 @@ func TestResolverRootPackageCoversRepo(t *testing.T) {
 	}
 	if got := r.ForDir("packages/api"); got.Version != "2.0.0" {
 		t.Errorf("more-specific entry should win over root, got %+v", got)
+	}
+}
+
+// A Tree-backed resolver answers ForDir purely from config's cascade: the repo baseline (a
+// top-level version, lockstep) governs unmatched units, a directories.<path> override carries
+// its own version (scheme inherited), and a nested entry layers its own scheme — proving the
+// precedence lives in config, not the resolver.
+func TestResolverFromTree(t *testing.T) {
+	fsys := fstest.MapFS{
+		"cairn.yaml": &fstest.MapFile{Data: []byte(`schema: "2"
+version: "1.0.0"
+versioning: semver
+directories:
+  packages/api:
+    version: "2.3.0"
+  packages/api/internal:
+    version: "0.9.0"
+    versioning: calver
+`)},
+	}
+	tree, err := config.LoadTree(fsys)
+	if err != nil {
+		t.Fatalf("LoadTree: %v", err)
+	}
+	r := NewResolverFromTree(tree)
+
+	tests := []struct {
+		name string
+		dir  string
+		want Target
+	}{
+		{"unmatched unit gets the repo baseline (lockstep)",
+			"tools/cli", Target{Version: "1.0.0", Versioning: "semver"}},
+		{"directory override carries its version, inherits the baseline scheme",
+			"packages/api", Target{Version: "2.3.0", Versioning: "semver"}},
+		{"dir under an override inherits that override, not the baseline",
+			"packages/api/handlers", Target{Version: "2.3.0", Versioning: "semver"}},
+		{"nested override layers its own version and scheme (nearest wins)",
+			"packages/api/internal", Target{Version: "0.9.0", Versioning: "calver"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := r.ForDir(tt.dir); got != tt.want {
+				t.Errorf("ForDir(%q) = %+v, want %+v", tt.dir, got, tt.want)
+			}
+		})
 	}
 }
 
