@@ -87,6 +87,12 @@ func parseRootTree(data []byte) (*Tree, error) {
 	}
 
 	var doc rootDoc
+	// Seed the baseline with the in-code defaults so a *partial* top-level block (e.g.
+	// `verify: { strict: true }`) merges onto them field-by-field rather than wiping the
+	// stages it doesn't mention — mirroring the legacy Default()+unmarshal merge and the
+	// no-file defaultTree(). Only the baseline is seeded; directories.<path> override
+	// entries stay nil ⇒ "inherit", so the cascade semantics are unchanged.
+	doc.Directory = baselineFromConfig(Default())
 	if err := yaml.Unmarshal(data, &doc); err != nil {
 		return nil, fmt.Errorf("parse cairn.yaml: %w", err)
 	}
@@ -263,6 +269,33 @@ func (t *Tree) Independent() []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// WithVersion returns a shallow copy of the Tree with the target version for dir set to v,
+// representing the post-bump state a bump resolves manifests/docs/workspace against. dir "."
+// sets the repo baseline (so lockstep units resolve to v); any other dir sets that directory's
+// own override (so only it — and its workspace dependents — move, while every other unit keeps
+// its current version and is a no-op). The original Tree is left unchanged; ownFiles/pruned are
+// shared read-only and rootDirs is cloned before a per-directory set.
+func (t *Tree) WithVersion(dir, v string) *Tree {
+	dir = path.Clean(dir)
+	nt := &Tree{
+		baseline: t.baseline,
+		rootDirs: make(map[string]Directory, len(t.rootDirs)),
+		ownFiles: t.ownFiles,
+		pruned:   t.pruned,
+	}
+	for k, d := range t.rootDirs {
+		nt.rootDirs[k] = d
+	}
+	if dir == "." {
+		nt.baseline.Version = &v
+	} else {
+		d := nt.rootDirs[dir]
+		d.Version = &v
+		nt.rootDirs[dir] = d
+	}
+	return nt
 }
 
 // Pruned lists the directories cut by the absolute disable gate, sorted.

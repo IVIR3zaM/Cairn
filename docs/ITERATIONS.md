@@ -526,7 +526,7 @@ instead of a config list. Purely additive — no caller changes, legacy fields u
 own `version` (root entry or own file), excludes ones that only inherit the baseline, excludes
 pruned subtrees, and is sorted; build + existing tests stay green.
 
-###### [ ] 10a-iii-c-ii — Refit `bump` (+ detection) onto the Tree
+###### [x] 10a-iii-c-ii — Refit `bump` (+ detection) onto the Tree
 **Read:** AGENTS.md · internal/cli/bump.go · internal/cli/verify.go (Tree-consuming template) · internal/config/{tree,directory}.go · internal/version/resolver.go · internal/detect/detect.go
 **Steps:** `bump`'s `RunE` loads a `config.Tree` (like `verify`); the repo-wide path reads/writes the
 baseline `version:` key; the per-package path enumerates `Tree.Independent()` and writes back to

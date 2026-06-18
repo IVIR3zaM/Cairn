@@ -56,22 +56,29 @@ func read(t *testing.T, path string) string {
 	return string(b)
 }
 
+// loadTree resolves the schema-2 per-directory config Tree from a temp repo, the same way the
+// bump command does — so tests exercise the real config cascade instead of a hand-built Config.
+func loadTree(t *testing.T, dir string) *config.Tree {
+	t.Helper()
+	tree, err := config.LoadTree(os.DirFS(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tree
+}
+
 // TestRunBumpUpdatesAllSurfaces is the happy path: a level bump must advance the manifest
-// in a language dir, rewrite a version-sync doc, advance canonical in cairn.yaml, and print
-// a suggested commit/tag — proving the whole bump flow wires together.
+// in a language dir, rewrite a version-sync doc, advance the baseline version in cairn.yaml, and
+// print a suggested commit/tag — proving the whole bump flow wires together.
 func TestRunBumpUpdatesAllSurfaces(t *testing.T) {
 	dir := t.TempDir()
-	cairn := writeFile(t, dir, "cairn.yaml", "project:\n  canonical_version: \"0.1.0\"\n")
+	cairn := writeFile(t, dir, "cairn.yaml",
+		"version: \"0.1.0\"\nversion_sync:\n  files:\n    - path: README.md\n      patterns:\n        - \"x@{VERSION}\"\n")
 	pkg := writeFile(t, dir, "web/package.json", `{"name":"x","version":"0.1.0"}`)
 	readme := writeFile(t, dir, "README.md", "Install x@0.1.0 today.\n")
 
-	cfg := config.Default()
-	cfg.Project.CanonicalVersion = "0.1.0"
-	cfg.Languages = map[string]config.Language{"javascript": {Dir: "web", Enabled: true}}
-	cfg.VersionSync.Files = []config.VersionSyncFile{{Path: "README.md", Patterns: []string{"x@{VERSION}"}}}
-
 	var out bytes.Buffer
-	if err := runBump(dir, cfg, "minor", time.Now(), &out, false, false); err != nil {
+	if err := runBump(dir, loadTree(t, dir), "minor", time.Now(), &out, false, false); err != nil {
 		t.Fatalf("runBump: %v", err)
 	}
 
@@ -81,8 +88,8 @@ func TestRunBumpUpdatesAllSurfaces(t *testing.T) {
 	if got := read(t, readme); !strings.Contains(got, "x@0.2.0") {
 		t.Errorf("version-sync doc not rewritten: %s", got)
 	}
-	if got := read(t, cairn); !strings.Contains(got, `canonical_version: "0.2.0"`) {
-		t.Errorf("canonical not advanced: %s", got)
+	if got := read(t, cairn); !strings.Contains(got, `version: "0.2.0"`) {
+		t.Errorf("baseline version not advanced: %s", got)
 	}
 	s := out.String()
 	for _, want := range []string{"0.1.0 → 0.2.0", `chore(release): 0.2.0`, "git tag v0.2.0"} {
@@ -96,14 +103,12 @@ func TestRunBumpUpdatesAllSurfaces(t *testing.T) {
 // promotes the configured CHANGELOG's [Unreleased] entries into a dated release.
 func TestRunBumpPromotesChangelog(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, dir, "cairn.yaml", "project:\n  canonical_version: \"0.1.0\"\n")
+	writeFile(t, dir, "cairn.yaml", "version: \"0.1.0\"\n")
 	cl := writeFile(t, dir, "CHANGELOG.md", "# Changelog\n\n## [Unreleased]\n\n### Added\n- A new thing.\n")
-	cfg := config.Default()
-	cfg.Project.CanonicalVersion = "0.1.0"
 
 	date := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
 	var out bytes.Buffer
-	if err := runBump(dir, cfg, "minor", date, &out, false, false); err != nil {
+	if err := runBump(dir, loadTree(t, dir), "minor", date, &out, false, false); err != nil {
 		t.Fatalf("runBump: %v", err)
 	}
 	if got := read(t, cl); !strings.Contains(got, "## [0.2.0] - 2024-06-01") || !strings.Contains(got, "- A new thing.") {
@@ -116,15 +121,12 @@ func TestRunBumpPromotesChangelog(t *testing.T) {
 // release can never be cut.
 func TestRunBumpEmptyChangelogFails(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, dir, "cairn.yaml", "project:\n  canonical_version: \"0.1.0\"\n")
+	writeFile(t, dir, "cairn.yaml", "version: \"0.1.0\"\n")
 	writeFile(t, dir, "CHANGELOG.md", "# Changelog\n\n## [Unreleased]\n\n## [0.1.0] - 2024-01-01\n\n### Added\n- First.\n")
 	pkg := writeFile(t, dir, "web/package.json", `{"name":"x","version":"0.1.0"}`)
-	cfg := config.Default()
-	cfg.Project.CanonicalVersion = "0.1.0"
-	cfg.Languages = map[string]config.Language{"javascript": {Dir: "web", Enabled: true}}
 
 	var out bytes.Buffer
-	err := runBump(dir, cfg, "minor", time.Now(), &out, false, false)
+	err := runBump(dir, loadTree(t, dir), "minor", time.Now(), &out, false, false)
 	if err == nil || !strings.Contains(err.Error(), "[Unreleased] section is empty") {
 		t.Fatalf("expected empty-changelog refusal, got err=%v", err)
 	}
@@ -139,7 +141,8 @@ func TestRunBumpEmptyChangelogFails(t *testing.T) {
 // an empty [Unreleased] in any one of them fails the whole bump.
 func TestRunBumpPromotesPerPackageChangelogs(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, dir, "cairn.yaml", "project:\n  canonical_version: \"0.1.0\"\n")
+	writeFile(t, dir, "cairn.yaml",
+		"version: \"0.1.0\"\nchangelog:\n  standard: keepachangelog\n  file: CHANGELOG.md\n  packages:\n    standard: dart\n    file: CHANGELOG.md\n")
 	// A Dart pub workspace with two members, each keeping its own changelog.
 	writeFile(t, dir, "pubspec.yaml", "name: ws\nworkspace:\n  - pkg_a\n  - pkg_b\n")
 	writeFile(t, dir, "pkg_a/pubspec.yaml", "name: pkg_a\nversion: 0.1.0\nresolution: workspace\n")
@@ -148,13 +151,9 @@ func TestRunBumpPromotesPerPackageChangelogs(t *testing.T) {
 	clA := writeFile(t, dir, "pkg_a/CHANGELOG.md", "# Changelog\n\n## Unreleased\n\n- Pkg A note.\n")
 	clB := writeFile(t, dir, "pkg_b/CHANGELOG.md", "# Changelog\n\n## Unreleased\n\n- Pkg B note.\n")
 
-	cfg := config.Default()
-	cfg.Project.CanonicalVersion = "0.1.0"
-	cfg.Changelog.Packages = &config.PackageChangelog{Standard: "dart", File: "CHANGELOG.md"}
-
 	date := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
 	var out bytes.Buffer
-	if err := runBump(dir, cfg, "minor", date, &out, false, false); err != nil {
+	if err := runBump(dir, loadTree(t, dir), "minor", date, &out, false, false); err != nil {
 		t.Fatalf("runBump: %v", err)
 	}
 	if got := read(t, root); !strings.Contains(got, "## [0.2.0] - 2024-06-01") {
@@ -169,34 +168,28 @@ func TestRunBumpPromotesPerPackageChangelogs(t *testing.T) {
 	// Emptying one package's Unreleased fails the whole bump.
 	writeFile(t, dir, "pkg_b/CHANGELOG.md", "# Changelog\n\n## Unreleased\n\n## 0.2.0 - 2024-06-01\n\n- Pkg B note.\n")
 	out.Reset()
-	err := runBump(dir, cfg, "minor", date, &out, false, false)
+	err := runBump(dir, loadTree(t, dir), "minor", date, &out, false, false)
 	if err == nil || !strings.Contains(err.Error(), "pkg_b/CHANGELOG.md") {
 		t.Fatalf("expected refusal naming pkg_b's empty changelog, got err=%v", err)
 	}
 }
 
 // TestRunPackageBumpPromotesOnlyItsChangelog proves the "bump one package" case: with
-// independently-versioned packages, `bump <pkg>` promotes only that package's changelog (and
+// independently-versioned directories, `bump <pkg>` promotes only that package's changelog (and
 // leaves the root changelog and the other package's changelog alone).
 func TestRunPackageBumpPromotesOnlyItsChangelog(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "cairn.yaml",
-		"project:\n  canonical_version: \"1.0.0\"\n  packages:\n    - path: pkg_a\n      version: \"1.0.0\"\n    - path: pkg_b\n      version: \"2.0.0\"\n")
+		"version: \"0.0.0\"\nchangelog:\n  standard: keepachangelog\n  file: CHANGELOG.md\n  packages:\n    standard: dart\n    file: CHANGELOG.md\ndirectories:\n  pkg_a:\n    version: \"1.0.0\"\n  pkg_b:\n    version: \"2.0.0\"\n")
 	writeFile(t, dir, "pkg_a/pubspec.yaml", "name: pkg_a\nversion: 1.0.0\n")
 	writeFile(t, dir, "pkg_b/pubspec.yaml", "name: pkg_b\nversion: 2.0.0\n")
 	root := writeFile(t, dir, "CHANGELOG.md", "# Changelog\n\n## [Unreleased]\n\n### Added\n- Root note.\n")
 	clA := writeFile(t, dir, "pkg_a/CHANGELOG.md", "# Changelog\n\n## Unreleased\n\n- Pkg A note.\n")
 	clB := writeFile(t, dir, "pkg_b/CHANGELOG.md", "# Changelog\n\n## Unreleased\n\n- Pkg B note.\n")
 
-	cfg, err := config.Load(filepath.Join(dir, "cairn.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	cfg.Changelog.Packages = &config.PackageChangelog{Standard: "dart", File: "CHANGELOG.md"}
-
 	date := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
 	var out bytes.Buffer
-	if err := runPackageBump(dir, cfg, "pkg_a", "minor", date, &out, false, false); err != nil {
+	if err := runPackageBump(dir, loadTree(t, dir), "pkg_a", "minor", date, &out, false, false); err != nil {
 		t.Fatalf("runPackageBump: %v", err)
 	}
 	if got := read(t, clA); !strings.Contains(got, "## 1.1.0 - 2024-06-01") {
@@ -210,24 +203,21 @@ func TestRunPackageBumpPromotesOnlyItsChangelog(t *testing.T) {
 	}
 }
 
-// TestRunBumpAutoDiscoversManifests proves the language-owned discovery path: with an empty
-// cfg.Languages, bump still finds and bumps each manifest purely from detection — a Rust
+// TestRunBumpAutoDiscoversManifests proves the language-owned discovery path: with no language
+// config at all, bump still finds and bumps each manifest purely from detection — a Rust
 // crate in a sub-dir, and the members of a Dart pub workspace whose 6e writer moves each
 // member's `version:` and the member-to-member `^` interdependency in lockstep — no config.
 func TestRunBumpAutoDiscoversManifests(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, dir, "cairn.yaml", "project:\n  canonical_version: \"0.1.0\"\n")
+	writeFile(t, dir, "cairn.yaml", "version: \"0.1.0\"\n")
 	crate := writeFile(t, dir, "engine/Cargo.toml", "[package]\nname = \"x\"\nversion = \"0.1.0\"\n")
 	// A Dart pub workspace: the root aggregates two members; pkg_b depends on pkg_a.
 	writeFile(t, dir, "pubspec.yaml", "name: ws\nworkspace:\n  - pkg_a\n  - pkg_b\n")
 	pkgA := writeFile(t, dir, "pkg_a/pubspec.yaml", "name: pkg_a\nversion: 0.1.0\nresolution: workspace\n")
 	pkgB := writeFile(t, dir, "pkg_b/pubspec.yaml", "name: pkg_b\nversion: 0.1.0\nresolution: workspace\n\ndependencies:\n  pkg_a: ^0.1.0\n")
 
-	cfg := config.Default()
-	cfg.Project.CanonicalVersion = "0.1.0" // note: no cfg.Languages entries at all
-
 	var out bytes.Buffer
-	if err := runBump(dir, cfg, "minor", time.Now(), &out, false, false); err != nil {
+	if err := runBump(dir, loadTree(t, dir), "minor", time.Now(), &out, false, false); err != nil {
 		t.Fatalf("runBump: %v", err)
 	}
 	if got := read(t, crate); !strings.Contains(got, `version = "0.2.0"`) {
@@ -241,38 +231,23 @@ func TestRunBumpAutoDiscoversManifests(t *testing.T) {
 	}
 }
 
-// TestRunPackageBump is the 6g-iii-b acceptance: in a mixed-language monorepo whose packages
-// version independently, `bump <pkg>` advances exactly one declared package — its own manifest,
-// its dependents' interdependency constraints, and its cairn.yaml entry — while every other
-// package (a Dart sibling on a different version, a Rust crate) and canonical_version stay put.
+// TestRunPackageBump is the per-package acceptance: in a mixed-language monorepo whose
+// directories version independently, `bump <pkg>` advances exactly one declared directory — its
+// own manifest, its dependents' interdependency constraints, and its directories.<path>.version
+// entry — while every other package (a Dart sibling on a different version, a Rust crate) and the
+// repo baseline stay put.
 func TestRunPackageBump(t *testing.T) {
 	dir := t.TempDir()
 	cairn := writeFile(t, dir, "cairn.yaml",
-		"project:\n"+
-			"  canonical_version: \"9.9.9\"\n"+
-			"  packages:\n"+
-			"    - path: pkg_a\n"+
-			"      version: 1.0.0\n"+
-			"    - path: pkg_b\n"+
-			"      version: 2.0.0\n"+
-			"    - path: rust_pkg\n"+
-			"      version: 3.0.0\n")
+		"version: \"9.9.9\"\ndirectories:\n  pkg_a:\n    version: \"1.0.0\"\n  pkg_b:\n    version: \"2.0.0\"\n  rust_pkg:\n    version: \"3.0.0\"\n")
 	// A Dart pub workspace: pkg_b depends on its sibling pkg_a. A Rust crate versions on its own.
 	writeFile(t, dir, "pubspec.yaml", "name: ws\nworkspace:\n  - pkg_a\n  - pkg_b\n")
 	pkgA := writeFile(t, dir, "pkg_a/pubspec.yaml", "name: pkg_a\nversion: 1.0.0\nresolution: workspace\n")
 	pkgB := writeFile(t, dir, "pkg_b/pubspec.yaml", "name: pkg_b\nversion: 2.0.0\nresolution: workspace\n\ndependencies:\n  pkg_a: ^1.0.0\n")
 	crate := writeFile(t, dir, "rust_pkg/Cargo.toml", "[package]\nname = \"rust_pkg\"\nversion = \"3.0.0\"\n")
 
-	cfg := config.Default()
-	cfg.Project.CanonicalVersion = "9.9.9"
-	cfg.Project.Packages = []config.PackageVersion{
-		{Path: "pkg_a", Version: "1.0.0"},
-		{Path: "pkg_b", Version: "2.0.0"},
-		{Path: "rust_pkg", Version: "3.0.0"},
-	}
-
 	var out bytes.Buffer
-	if err := runPackageBump(dir, cfg, "pkg_a", "minor", time.Now(), &out, false, false); err != nil {
+	if err := runPackageBump(dir, loadTree(t, dir), "pkg_a", "minor", time.Now(), &out, false, false); err != nil {
 		t.Fatalf("runPackageBump: %v", err)
 	}
 
@@ -289,14 +264,14 @@ func TestRunPackageBump(t *testing.T) {
 		t.Errorf("rust_pkg should be untouched: %s", got)
 	}
 	got := read(t, cairn)
-	if !strings.Contains(got, "    - path: pkg_a\n      version: 1.1.0") {
+	if !strings.Contains(got, "  pkg_a:\n    version: \"1.1.0\"") {
 		t.Errorf("cairn.yaml pkg_a entry not advanced: %s", got)
 	}
-	if !strings.Contains(got, "version: 2.0.0") || !strings.Contains(got, "version: 3.0.0") {
+	if !strings.Contains(got, `version: "2.0.0"`) || !strings.Contains(got, `version: "3.0.0"`) {
 		t.Errorf("cairn.yaml other package entries must stay put: %s", got)
 	}
-	if !strings.Contains(got, `canonical_version: "9.9.9"`) {
-		t.Errorf("canonical_version must not change on a per-package bump: %s", got)
+	if !strings.Contains(got, `version: "9.9.9"`) {
+		t.Errorf("baseline version must not change on a per-package bump: %s", got)
 	}
 	if s := out.String(); !strings.Contains(s, "Bumped pkg_a: 1.0.0 → 1.1.0") || !strings.Contains(s, "git tag pkg_a-v1.1.0") {
 		t.Errorf("per-package banner/tag missing:\n%s", s)
@@ -306,9 +281,9 @@ func TestRunPackageBump(t *testing.T) {
 // TestRunPackageBumpUnknown confirms an undeclared package name fails fast with the valid
 // choices, rather than silently doing nothing.
 func TestRunPackageBumpUnknown(t *testing.T) {
-	cfg := config.Default()
-	cfg.Project.Packages = []config.PackageVersion{{Path: "pkg_a", Version: "1.0.0"}}
-	err := runPackageBump(t.TempDir(), cfg, "nope", "patch", time.Now(), &bytes.Buffer{}, false, false)
+	dir := t.TempDir()
+	writeFile(t, dir, "cairn.yaml", "version: \"0.0.0\"\ndirectories:\n  pkg_a:\n    version: \"1.0.0\"\n")
+	err := runPackageBump(dir, loadTree(t, dir), "nope", "patch", time.Now(), &bytes.Buffer{}, false, false)
 	if err == nil || !strings.Contains(err.Error(), "pkg_a") {
 		t.Fatalf("want unknown-package error listing pkg_a, got %v", err)
 	}
@@ -317,32 +292,30 @@ func TestRunPackageBumpUnknown(t *testing.T) {
 // TestRunBumpExplicitVersion confirms an explicit X.Y.Z is honored over level math.
 func TestRunBumpExplicitVersion(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, dir, "cairn.yaml", "project:\n  canonical_version: 1.2.3\n")
-	cfg := config.Default()
-	cfg.Project.CanonicalVersion = "1.2.3"
+	cairn := writeFile(t, dir, "cairn.yaml", "version: 1.2.3\n")
 
 	var out bytes.Buffer
-	if err := runBump(dir, cfg, "2.0.0", time.Now(), &out, false, false); err != nil {
+	if err := runBump(dir, loadTree(t, dir), "2.0.0", time.Now(), &out, false, false); err != nil {
 		t.Fatalf("runBump: %v", err)
 	}
-	if got := read(t, filepath.Join(dir, "cairn.yaml")); !strings.Contains(got, "canonical_version: 2.0.0") {
-		t.Errorf("unquoted canonical not advanced: %s", got)
+	if got := read(t, cairn); !strings.Contains(got, "version: 2.0.0") {
+		t.Errorf("unquoted baseline version not advanced: %s", got)
 	}
 }
 
-// TestRunBumpGuards covers the two refusals: an unset canonical and a non-increasing bump
+// TestRunBumpGuards covers the two refusals: an unset baseline version and a non-increasing bump
 // (here an explicit downgrade). Neither should touch the filesystem.
 func TestRunBumpGuards(t *testing.T) {
-	t.Run("empty canonical", func(t *testing.T) {
-		cfg := config.Default() // CanonicalVersion is ""
-		if err := runBump(t.TempDir(), cfg, "patch", time.Now(), &bytes.Buffer{}, false, false); err == nil {
-			t.Fatal("want error on unset canonical")
+	t.Run("empty version", func(t *testing.T) {
+		dir := t.TempDir() // no cairn.yaml ⇒ defaults, baseline version unset
+		if err := runBump(dir, loadTree(t, dir), "patch", time.Now(), &bytes.Buffer{}, false, false); err == nil {
+			t.Fatal("want error on unset baseline version")
 		}
 	})
 	t.Run("downgrade", func(t *testing.T) {
-		cfg := config.Default()
-		cfg.Project.CanonicalVersion = "2.0.0"
-		err := runBump(t.TempDir(), cfg, "1.0.0", time.Now(), &bytes.Buffer{}, false, false)
+		dir := t.TempDir()
+		writeFile(t, dir, "cairn.yaml", "version: \"2.0.0\"\n")
+		err := runBump(dir, loadTree(t, dir), "1.0.0", time.Now(), &bytes.Buffer{}, false, false)
 		if err == nil || !strings.Contains(err.Error(), "not greater") {
 			t.Fatalf("want downgrade guard, got %v", err)
 		}
@@ -354,18 +327,16 @@ func TestRunBumpGuards(t *testing.T) {
 
 // TestRunBumpForceDowngrade proves --force is the direct-path equivalent of the wizard's
 // double-confirm: an explicit lower version that the guard would reject is applied when
-// force is set, advancing canonical backwards on purpose.
+// force is set, advancing the baseline backwards on purpose.
 func TestRunBumpForceDowngrade(t *testing.T) {
 	dir := t.TempDir()
-	cairn := writeFile(t, dir, "cairn.yaml", "project:\n  canonical_version: \"2.0.0\"\n")
-	cfg := config.Default()
-	cfg.Project.CanonicalVersion = "2.0.0"
+	cairn := writeFile(t, dir, "cairn.yaml", "version: \"2.0.0\"\n")
 
 	var out bytes.Buffer
-	if err := runBump(dir, cfg, "1.0.0", time.Now(), &out, false, true); err != nil {
+	if err := runBump(dir, loadTree(t, dir), "1.0.0", time.Now(), &out, false, true); err != nil {
 		t.Fatalf("forced downgrade: %v", err)
 	}
-	if got := read(t, cairn); !strings.Contains(got, `canonical_version: "1.0.0"`) {
+	if got := read(t, cairn); !strings.Contains(got, `version: "1.0.0"`) {
 		t.Errorf("forced downgrade not applied: %s", got)
 	}
 }
@@ -373,9 +344,9 @@ func TestRunBumpForceDowngrade(t *testing.T) {
 // TestRunBumpForceRejectsSame confirms --force still refuses a no-op: forcing the current
 // version has nothing to apply, so it errors rather than silently doing nothing.
 func TestRunBumpForceRejectsSame(t *testing.T) {
-	cfg := config.Default()
-	cfg.Project.CanonicalVersion = "2.0.0"
-	err := runBump(t.TempDir(), cfg, "2.0.0", time.Now(), &bytes.Buffer{}, false, true)
+	dir := t.TempDir()
+	writeFile(t, dir, "cairn.yaml", "version: \"2.0.0\"\n")
+	err := runBump(dir, loadTree(t, dir), "2.0.0", time.Now(), &bytes.Buffer{}, false, true)
 	if err == nil || !strings.Contains(err.Error(), "same") {
 		t.Fatalf("want same-version refusal even with force, got %v", err)
 	}
@@ -427,16 +398,14 @@ func TestJumpKind(t *testing.T) {
 // front-end reaches the same applyBump core as the direct path.
 func TestWizardAppliesOnConfirm(t *testing.T) {
 	dir := t.TempDir()
-	cairn := writeFile(t, dir, "cairn.yaml", "project:\n  canonical_version: \"1.2.0\"\n")
-	cfg := config.Default()
-	cfg.Project.CanonicalVersion = "1.2.0"
+	cairn := writeFile(t, dir, "cairn.yaml", "version: \"1.2.0\"\n")
 
 	var out bytes.Buffer
-	if err := runBumpWizard(dir, cfg, strings.NewReader("2\ny\n"), &out, false, ""); err != nil {
+	if err := runBumpWizard(dir, loadTree(t, dir), strings.NewReader("2\ny\n"), &out, false, ""); err != nil {
 		t.Fatalf("wizard: %v", err)
 	}
-	if got := read(t, cairn); !strings.Contains(got, `canonical_version: "1.3.0"`) {
-		t.Errorf("canonical not advanced: %s", got)
+	if got := read(t, cairn); !strings.Contains(got, `version: "1.3.0"`) {
+		t.Errorf("baseline version not advanced: %s", got)
 	}
 	if s := out.String(); !strings.Contains(s, "Bumped 1.2.0 → 1.3.0") {
 		t.Errorf("missing banner:\n%s", s)
@@ -447,16 +416,14 @@ func TestWizardAppliesOnConfirm(t *testing.T) {
 // Enter (empty choice) accepts it, so feeding "" then a confirm applies the inferred bump.
 func TestWizardPreselectsInferred(t *testing.T) {
 	dir := t.TempDir()
-	cairn := writeFile(t, dir, "cairn.yaml", "project:\n  canonical_version: \"1.2.0\"\n")
-	cfg := config.Default()
-	cfg.Project.CanonicalVersion = "1.2.0"
+	cairn := writeFile(t, dir, "cairn.yaml", "version: \"1.2.0\"\n")
 
 	var out bytes.Buffer
 	// Empty choice (Enter) + confirm, with "minor" inferred ⇒ 1.3.0.
-	if err := runBumpWizard(dir, cfg, strings.NewReader("\ny\n"), &out, false, "minor"); err != nil {
+	if err := runBumpWizard(dir, loadTree(t, dir), strings.NewReader("\ny\n"), &out, false, "minor"); err != nil {
 		t.Fatalf("wizard: %v", err)
 	}
-	if got := read(t, cairn); !strings.Contains(got, `canonical_version: "1.3.0"`) {
+	if got := read(t, cairn); !strings.Contains(got, `version: "1.3.0"`) {
 		t.Errorf("inferred level not applied on Enter: %s", got)
 	}
 	if s := out.String(); !strings.Contains(s, "inferred from commits") {
@@ -467,12 +434,10 @@ func TestWizardPreselectsInferred(t *testing.T) {
 // TestWizardQuitLeavesFilesUntouched confirms 'q' aborts cleanly without writing.
 func TestWizardQuitLeavesFilesUntouched(t *testing.T) {
 	dir := t.TempDir()
-	cairn := writeFile(t, dir, "cairn.yaml", "project:\n  canonical_version: \"1.2.0\"\n")
-	cfg := config.Default()
-	cfg.Project.CanonicalVersion = "1.2.0"
+	cairn := writeFile(t, dir, "cairn.yaml", "version: \"1.2.0\"\n")
 
 	var out bytes.Buffer
-	if err := runBumpWizard(dir, cfg, strings.NewReader("q\n"), &out, false, ""); err != nil {
+	if err := runBumpWizard(dir, loadTree(t, dir), strings.NewReader("q\n"), &out, false, ""); err != nil {
 		t.Fatalf("wizard: %v", err)
 	}
 	if got := read(t, cairn); !strings.Contains(got, "1.2.0") || strings.Contains(got, "1.3.0") {
@@ -488,16 +453,14 @@ func TestWizardQuitLeavesFilesUntouched(t *testing.T) {
 // lower version and two yeses applies it.
 func TestWizardDowngradeNeedsDoubleConfirm(t *testing.T) {
 	dir := t.TempDir()
-	cairn := writeFile(t, dir, "cairn.yaml", "project:\n  canonical_version: \"2.0.0\"\n")
-	cfg := config.Default()
-	cfg.Project.CanonicalVersion = "2.0.0"
+	cairn := writeFile(t, dir, "cairn.yaml", "version: \"2.0.0\"\n")
 
 	var out bytes.Buffer
 	// choice 4 (custom) → 1.0.0 → downgrade confirm → second confirm → apply confirm.
-	if err := runBumpWizard(dir, cfg, strings.NewReader("4\n1.0.0\ny\ny\ny\n"), &out, false, ""); err != nil {
+	if err := runBumpWizard(dir, loadTree(t, dir), strings.NewReader("4\n1.0.0\ny\ny\ny\n"), &out, false, ""); err != nil {
 		t.Fatalf("wizard: %v", err)
 	}
-	if got := read(t, cairn); !strings.Contains(got, `canonical_version: "1.0.0"`) {
+	if got := read(t, cairn); !strings.Contains(got, `version: "1.0.0"`) {
 		t.Errorf("confirmed downgrade not applied: %s", got)
 	}
 	if !strings.Contains(out.String(), "DOWNGRADE") {
@@ -508,12 +471,11 @@ func TestWizardDowngradeNeedsDoubleConfirm(t *testing.T) {
 // TestComputeNextCalVer checks that for the calver scheme a level argument yields the
 // date-based next version rather than semver math.
 func TestComputeNextCalVer(t *testing.T) {
-	cfg := config.Default()
-	cfg.Project.Versioning = "calver"
-	cfg.Project.CanonicalVersion = "2024.1.0"
+	dir := t.TempDir()
+	writeFile(t, dir, "cairn.yaml", "version: \"2024.1.0\"\nversioning: calver\n")
 	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 
-	_, next, err := computeNext(cfg, "patch", now, false)
+	_, next, err := computeNext(loadTree(t, dir), "patch", now, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -522,36 +484,31 @@ func TestComputeNextCalVer(t *testing.T) {
 	}
 }
 
-// TestInferredPackageBump is the 8c acceptance: in a mixed-language monorepo, a `feat:` that
-// touched only pkg_a infers `minor` for pkg_a and `none` for pkg_b (each from its own scoped
-// history), and `cairn bump <pkg>` with no level applies the inferred level to that package
-// alone. Neither package has a tag yet, so inference degrades to each package's whole history.
+// TestInferredPackageBump is the per-package inference acceptance: in a mixed-language monorepo,
+// a `feat:` that touched only pkg_a infers `minor` for pkg_a and `none` for pkg_b (each from its
+// own scoped history), and `cairn bump <pkg>` with no level applies the inferred level to that
+// package alone. Neither package has a tag yet, so inference degrades to each package's whole
+// history.
 func TestInferredPackageBump(t *testing.T) {
 	dir := t.TempDir()
 	cairn := writeFile(t, dir, "cairn.yaml",
-		"project:\n  canonical_version: \"9.9.9\"\n  packages:\n    - path: pkg_a\n      version: 1.0.0\n    - path: pkg_b\n      version: 2.0.0\n")
+		"version: \"0.0.0\"\ndirectories:\n  pkg_a:\n    version: \"1.0.0\"\n  pkg_b:\n    version: \"2.0.0\"\n")
 	pkgA := writeFile(t, dir, "pkg_a/pubspec.yaml", "name: pkg_a\nversion: 1.0.0\n")
 	pkgB := writeFile(t, dir, "pkg_b/pubspec.yaml", "name: pkg_b\nversion: 2.0.0\n")
 	gitCommit(t, dir, "chore: scaffold", "cairn.yaml", "pkg_a", "pkg_b")
 	writeFile(t, dir, "pkg_a/feature.txt", "new\n")
 	gitCommit(t, dir, "feat: add a feature to pkg_a", "pkg_a/feature.txt")
 
-	cfg := config.Default()
-	cfg.Project.CanonicalVersion = "9.9.9"
-	cfg.Project.Packages = []config.PackageVersion{
-		{Path: "pkg_a", Version: "1.0.0"},
-		{Path: "pkg_b", Version: "2.0.0"},
-	}
-
-	if got := inferPackageLevel(dir, cfg, cfg.Project.Packages[0]); got != "minor" {
+	tree := loadTree(t, dir)
+	if got := inferPackageLevel(dir, tree, "pkg_a"); got != "minor" {
 		t.Errorf("pkg_a inferred level = %q, want minor", got)
 	}
-	if got := inferPackageLevel(dir, cfg, cfg.Project.Packages[1]); got != "" {
+	if got := inferPackageLevel(dir, tree, "pkg_b"); got != "" {
 		t.Errorf("pkg_b inferred level = %q, want none", got)
 	}
 
 	var out bytes.Buffer
-	if err := runInferredPackageBump(dir, cfg, 0, time.Now(), &out, false, false); err != nil {
+	if err := runInferredPackageBump(dir, tree, "pkg_a", time.Now(), &out, false, false); err != nil {
 		t.Fatalf("runInferredPackageBump: %v", err)
 	}
 	if got := read(t, pkgA); !strings.Contains(got, "version: 1.1.0") {
@@ -560,8 +517,8 @@ func TestInferredPackageBump(t *testing.T) {
 	if got := read(t, pkgB); !strings.Contains(got, "version: 2.0.0") {
 		t.Errorf("pkg_b must be untouched: %s", got)
 	}
-	if got := read(t, cairn); !strings.Contains(got, "      version: 1.1.0") || !strings.Contains(got, `canonical_version: "9.9.9"`) {
-		t.Errorf("cairn.yaml: pkg_a should advance, canonical stay: %s", got)
+	if got := read(t, cairn); !strings.Contains(got, "    version: \"1.1.0\"") || !strings.Contains(got, `version: "0.0.0"`) {
+		t.Errorf("cairn.yaml: pkg_a should advance, baseline stay: %s", got)
 	}
 }
 
@@ -570,12 +527,11 @@ func TestInferredPackageBump(t *testing.T) {
 // names the package, rather than silently doing nothing.
 func TestInferredPackageBumpNoChanges(t *testing.T) {
 	dir := t.TempDir()
+	writeFile(t, dir, "cairn.yaml", "version: \"0.0.0\"\ndirectories:\n  pkg_a:\n    version: \"1.0.0\"\n")
 	writeFile(t, dir, "pkg_a/pubspec.yaml", "name: pkg_a\nversion: 1.0.0\n")
-	gitCommit(t, dir, "chore: scaffold", "pkg_a")
+	gitCommit(t, dir, "chore: scaffold", "cairn.yaml", "pkg_a")
 
-	cfg := config.Default()
-	cfg.Project.Packages = []config.PackageVersion{{Path: "pkg_a", Version: "1.0.0"}}
-	err := runInferredPackageBump(dir, cfg, 0, time.Now(), &bytes.Buffer{}, false, false)
+	err := runInferredPackageBump(dir, loadTree(t, dir), "pkg_a", time.Now(), &bytes.Buffer{}, false, false)
 	if err == nil || !strings.Contains(err.Error(), "pkg_a") {
 		t.Fatalf("want a no-inference error naming pkg_a, got %v", err)
 	}

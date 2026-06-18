@@ -7,7 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Schema-2 `cairn.yaml` baseline now starts from the in-code defaults, so a *partial* top-level
+  block (e.g. `verify: { strict: true }`) merges field-by-field instead of wiping the stages it
+  omits. Previously `parseRootTree` parsed the baseline from a zero value, silently disabling
+  `format`/`lint`/`test` and leaving `verify` to run only the version checks; it now seeds the
+  baseline via `baselineFromConfig(Default())` before unmarshalling (mirroring the legacy
+  `Default()`+unmarshal merge and the no-file `defaultTree()`). Directory override entries stay
+  nil ⇒ "inherit", so the cascade is unchanged.
+
 ### Changed
+- `cairn bump` now resolves everything through the per-directory config `Tree` (10a-iii-c-ii):
+  it loads via `config.LoadTree`, reads/writes the repo baseline top-level `version:` for repo-wide
+  bumps, enumerates `Tree.Independent()` (writing back to `directories.<path>.version`) for
+  per-package bumps, and drives manifests/version_sync/changelog/workspace through
+  `version.NewResolverFromTree` (post-bump target via the new `config.Tree.WithVersion`) — so the
+  CLI carries no YAML-reading or precedence logic beyond its own cairn.yaml write-back. Commits,
+  changelog (incl. per-package), and version_sync come from the resolved baseline `Directory`;
+  bump tests migrated to schema-2 fixtures. Single-package repos behave exactly as before.
 - `cairn verify` now resolves each detected unit's settings through the per-directory config
   `Tree` (10a-iii-b): languages standard/strict, verify stage toggles, version_sync, the absolute
   disable gate, and the target version all come from `Tree.Resolve` + `version.NewResolverFromTree`,

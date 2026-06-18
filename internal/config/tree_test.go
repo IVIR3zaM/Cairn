@@ -95,6 +95,33 @@ verify: { strict: false }
 	}
 }
 
+// A partial top-level block must merge onto the in-code defaults, not wipe the stages it
+// omits: writing only `verify: { strict: true }` keeps format/lint/test enabled (regression —
+// the schema-2 baseline used to start from zero, silently disabling every language stage).
+func TestResolve_PartialVerifyKeepsDefaultStages(t *testing.T) {
+	fsys := fstest.MapFS{
+		"cairn.yaml": &fstest.MapFile{Data: []byte(`
+schema: "2"
+version: "1.0.0"
+verify: { strict: true }
+`)},
+		"packages/lib/pubspec.yaml": &fstest.MapFile{Data: []byte("name: lib\n")},
+	}
+	tr, err := LoadTree(fsys)
+	if err != nil {
+		t.Fatalf("LoadTree: %v", err)
+	}
+	d, _ := tr.Resolve("packages/lib")
+	v := d.VerifyOrDefault()
+	if !v.Strict {
+		t.Error("strict = false, want true (the one field the file set)")
+	}
+	if !v.Format.Enabled || !v.Lint.Enabled || !v.Test.Enabled {
+		t.Errorf("default stages disabled by a partial verify block: format=%v lint=%v test=%v",
+			v.Format.Enabled, v.Lint.Enabled, v.Test.Enabled)
+	}
+}
+
 // The absolute disable gate prunes a subtree and its own cairn.yaml is never read: a gated
 // directory holding invalid YAML must not error, and Resolve reports it pruned.
 func TestDisableGate_OwnFileNeverRead(t *testing.T) {

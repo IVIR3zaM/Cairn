@@ -22,35 +22,39 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// canonicalRe locates the value of project.canonical_version in a cairn.yaml so bump can
-// advance it after a release. Group 1 is the key plus any opening quote, group 2 the
-// version literal, group 3 the optional closing quote — so re-quoting is preserved.
-var canonicalRe = regexp.MustCompile(`(canonical_version:\s*"?)(v?\d+\.\d+\.\d+)("?)`)
+// baselineVersionRe locates the top-level (column-0) `version:` value in a schema-2 cairn.yaml
+// so a repo-wide bump can advance the repo baseline. The `(?m)^` anchors it to an unindented
+// line, so nested `directories.<path>.version:` entries are never matched. Group 1 is the key
+// plus any opening quote, group 2 the version literal, group 3 the optional closing quote and
+// trailing whitespace — so re-quoting and layout are preserved.
+var baselineVersionRe = regexp.MustCompile(`(?m)^(version:[ \t]*"?)(v?\d+\.\d+\.\d+)("?[ \t]*)$`)
 
 func newBumpCmd() *cobra.Command {
 	var force bool
 	cmd := &cobra.Command{
 		Use:   "bump [pkg] [level|version]",
 		Short: "Bump the version (interactive wizard, or pass a level/version), updating manifests + docs",
-		Long: "Bump computes the next version from project.canonical_version and applies it: " +
+		Long: "Bump computes the next version from the repo baseline `version` and applies it: " +
 			"it updates every registered manifest in the repo and each language dir, rewrites " +
-			"version-sync doc patterns, and updates canonical_version in cairn.yaml. Run it with " +
+			"version-sync doc patterns, and updates the baseline `version` in cairn.yaml. Run it with " +
 			"no argument for a guided, colorful wizard (patch/minor/major/custom with a " +
 			"downgrade safeguard), or pass a level (major|minor|patch) or an explicit X.Y.Z to " +
-			"apply directly. In a monorepo with project.packages, pass `cairn bump <pkg> " +
-			"<level|version>` to advance a single declared package from its own version line — " +
-			"updating only that package's manifests, its dependents' interdependency constraints, " +
-			"and its cairn.yaml entry, leaving the others (and canonical_version) untouched; the " +
-			"no-argument wizard stays repo-wide. A direct bump refuses to go backwards; pass " +
-			"--force to allow an explicit downgrade (the wizard double-confirms one instead). It " +
-			"prints a suggested commit and tag but never commits.",
+			"apply directly. In a monorepo with independently-versioned directories, pass " +
+			"`cairn bump <pkg> <level|version>` to advance a single directory from its own version " +
+			"line — updating only that directory's manifests, its dependents' interdependency " +
+			"constraints, and its directories.<path>.version entry, leaving the others (and the " +
+			"baseline) untouched; the no-argument wizard stays repo-wide. A direct bump refuses to go " +
+			"backwards; pass --force to allow an explicit downgrade (the wizard double-confirms one " +
+			"instead). It prints a suggested commit and tag but never commits.",
 		Args: cobra.MaximumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			wd, err := os.Getwd()
 			if err != nil {
 				return err
 			}
-			cfg, err := config.LoadOrDefault("cairn.yaml")
+			// config owns the per-directory cascade: bump asks the Tree for the resolved baseline
+			// and per-directory settings instead of reading cairn.yaml or re-deriving precedence.
+			tree, err := config.LoadTree(os.DirFS(wd))
 			if err != nil {
 				return err
 			}
@@ -58,37 +62,67 @@ func newBumpCmd() *cobra.Command {
 			color := report.Detect(out, false, false).Color
 			switch len(args) {
 			case 2:
-				return runPackageBump(wd, cfg, args[0], args[1], time.Now(), out, color, force)
+				return runPackageBump(wd, tree, args[0], args[1], time.Now(), out, color, force)
 			case 1:
-				// `cairn bump <pkg>` (a declared package, no level) infers that package's level
-				// from its own path-scoped history and advances only it; otherwise the lone arg is
-				// a repo-wide level/version.
-				if idx := findPackage(cfg.Project.Packages, args[0]); idx >= 0 {
-					return runInferredPackageBump(wd, cfg, idx, time.Now(), out, color, force)
+				// `cairn bump <pkg>` (an independently-versioned directory, no level) infers that
+				// package's level from its own path-scoped history and advances only it; otherwise
+				// the lone arg is a repo-wide level/version.
+				if dir := findIndependent(tree, args[0]); dir != "" {
+					return runInferredPackageBump(wd, tree, dir, time.Now(), out, color, force)
 				}
-				return runBump(wd, cfg, args[0], time.Now(), out, color, force)
+				return runBump(wd, tree, args[0], time.Now(), out, color, force)
 			}
-			// No argument. In a project.packages monorepo, levels are per-package, so show a
-			// per-package inferred summary rather than a single repo-wide choice.
-			if len(cfg.Project.Packages) > 0 {
-				return runMonorepoSummary(wd, cfg, out, color)
+			// No argument. In a monorepo with independent directories, levels are per-package, so
+			// show a per-package inferred summary rather than a single repo-wide choice.
+			if len(tree.Independent()) > 0 {
+				return runMonorepoSummary(wd, tree, out, color)
 			}
-			// Repo-wide (no packages): infer one level from the commit history since the last tag,
-			// using the configured commit convention. The wizard preselects it; a non-interactive
-			// run applies it directly (and errors only if nothing release-worthy could be inferred).
-			inferred := inferLevel(wd, cfg)
+			// Repo-wide (no independent dirs): infer one level from the commit history since the
+			// last tag, using the configured commit convention. The wizard preselects it; a
+			// non-interactive run applies it directly (and errors only if nothing could be inferred).
+			inferred := inferLevel(wd, tree)
 			in := cmd.InOrStdin()
 			if canPrompt(in) {
-				return runBumpWizard(wd, cfg, in, out, color, inferred)
+				return runBumpWizard(wd, tree, in, out, color, inferred)
 			}
 			if inferred == "" {
 				return fmt.Errorf("bump needs a level or version when not run interactively (e.g. `cairn bump patch`); none could be inferred from commit history since the last tag")
 			}
-			return runBump(wd, cfg, inferred, time.Now(), out, color, force)
+			return runBump(wd, tree, inferred, time.Now(), out, color, force)
 		},
 	}
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "allow an explicit downgrade in a direct (non-interactive) bump")
 	return cmd
+}
+
+// resolvedCommits returns the repo baseline commit convention config, falling back to the
+// in-code defaults when no layer set it — so bump reads the convention from the resolved Tree
+// rather than re-deriving it.
+func resolvedCommits(tree *config.Tree) config.Commits {
+	root, _ := tree.Resolve(".")
+	if root.Commits != nil {
+		return *root.Commits
+	}
+	return config.Default().Commits
+}
+
+// resolvedChangelog returns the repo baseline changelog config (including the per-package
+// `packages` style), falling back to the in-code defaults when no layer set it.
+func resolvedChangelog(tree *config.Tree) config.Changelog {
+	root, _ := tree.Resolve(".")
+	if root.Changelog != nil {
+		return *root.Changelog
+	}
+	return config.Default().Changelog
+}
+
+// resolvedVersionSyncFiles returns the repo baseline version_sync files, or none when unset.
+func resolvedVersionSyncFiles(tree *config.Tree) []config.VersionSyncFile {
+	root, _ := tree.Resolve(".")
+	if root.VersionSync != nil {
+		return root.VersionSync.Files
+	}
+	return nil
 }
 
 // inferLevel infers the bump level from commit history using the project's configured commit
@@ -96,8 +130,8 @@ func newBumpCmd() *cobra.Command {
 // bump (see commit.InferBump). It returns "" — "couldn't infer a level" — when the convention
 // has no registered validator, the repo has no commits/tags/git, or nothing release-worthy was
 // found; callers treat that as "ask for / require an explicit level".
-func inferLevel(wd string, cfg *config.Config) string {
-	v, ok := commit.ValidatorFor(cfg.Commits.Convention)
+func inferLevel(wd string, tree *config.Tree) string {
+	v, ok := commit.ValidatorFor(resolvedCommits(tree).Convention)
 	if !ok {
 		return ""
 	}
@@ -166,102 +200,93 @@ func lastPackageTag(wd, label string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// inferPackageLevel infers a single package's bump level from the commits that touched its
-// directory since its own last tag, classified via the project's configured commit convention
-// (see commit.InferBump). It returns "" — "nothing release-worthy" — when the convention has no
+// inferPackageLevel infers a single package directory's bump level from the commits that touched
+// it since its own last tag, classified via the project's configured commit convention (see
+// commit.InferBump). It returns "" — "nothing release-worthy" — when the convention has no
 // validator, or the package has no qualifying commits; callers treat that as "require/skip".
-func inferPackageLevel(wd string, cfg *config.Config, pkg config.PackageVersion) string {
-	v, ok := commit.ValidatorFor(cfg.Commits.Convention)
+func inferPackageLevel(wd string, tree *config.Tree, dir string) string {
+	v, ok := commit.ValidatorFor(resolvedCommits(tree).Convention)
 	if !ok {
 		return ""
 	}
-	return commit.InferBump(v, commitHistoryFor(wd, path.Clean(pkg.Path))).Level()
+	return commit.InferBump(v, commitHistoryFor(wd, path.Clean(dir))).Level()
 }
 
 // runBump applies a non-interactive bump from arg (a level or explicit version), guarding
-// an unset canonical and a non-increase before touching anything. force lifts only the
+// an unset baseline version and a non-increase before touching anything. force lifts only the
 // downgrade guard, the same escape hatch the wizard offers via its double-confirm. It
 // leaves I/O at the edges so tests drive it on a temp tree; the wizard shares the same
 // applyBump core.
-func runBump(wd string, cfg *config.Config, arg string, now time.Time, out io.Writer, color, force bool) error {
-	cur, next, err := computeNext(cfg, arg, now, force)
+func runBump(wd string, tree *config.Tree, arg string, now time.Time, out io.Writer, color, force bool) error {
+	cur, next, err := computeNext(tree, arg, now, force)
 	if err != nil {
 		return err
 	}
-	return applyBump(wd, cfg, repoPlan(cur, next, now), out, palette{on: color})
+	return applyBump(wd, tree, repoPlan(tree, cur, next, now), out, palette{on: color})
 }
 
-// runPackageBump advances a single declared package in a monorepo: it computes the package's
-// next version from its own project.packages[].version (honoring its versioning scheme), then
-// applies it only to that package — its manifests, its dependents' interdependency constraints,
-// and its cairn.yaml entry — leaving every other package and canonical_version alone. The
-// resolver it builds reflects the post-bump state (the target at next, all others unchanged),
-// so the shared engine naturally skips honest manifests and repairs only the stale sibling pins
-// that point at the bumped package.
-func runPackageBump(wd string, cfg *config.Config, pkgArg, arg string, now time.Time, out io.Writer, color, force bool) error {
-	idx := findPackage(cfg.Project.Packages, pkgArg)
-	if idx < 0 {
-		return fmt.Errorf("no package %q declared in project.packages (declared: %s)", pkgArg, declaredPaths(cfg.Project.Packages))
+// runPackageBump advances a single independently-versioned directory in a monorepo: it computes
+// the directory's next version from its own resolved version (honoring its versioning scheme),
+// then applies it only to that directory — its manifests, its dependents' interdependency
+// constraints, and its directories.<path>.version entry — leaving every other directory and the
+// baseline alone. The resolver it builds reflects the post-bump state (the target at next, all
+// others unchanged), so the shared engine naturally skips honest manifests and repairs only the
+// stale sibling pins that point at the bumped package.
+func runPackageBump(wd string, tree *config.Tree, pkgArg, arg string, now time.Time, out io.Writer, color, force bool) error {
+	dir := findIndependent(tree, pkgArg)
+	if dir == "" {
+		return fmt.Errorf("no independently-versioned directory %q (declared: %s)", pkgArg, declaredPaths(tree))
 	}
-	pkg := cfg.Project.Packages[idx]
-	cur, next, err := computeNextFrom(
-		fmt.Sprintf("project.packages[%s].version", path.Clean(pkg.Path)),
-		pkg.Version, pkg.VersioningFor(cfg.Project.Versioning), arg, now, force)
+	cur := versioning.NewResolverFromTree(tree).ForDir(dir)
+	curVer, next, err := computeNextFrom(
+		fmt.Sprintf("directories.%s.version", dir), cur.Version, cur.Versioning, arg, now, force)
 	if err != nil {
 		return err
 	}
 
-	proj := cfg.Project
-	pkgs := make([]config.PackageVersion, len(proj.Packages))
-	copy(pkgs, proj.Packages)
-	pkgs[idx].Version = next.String()
-	proj.Packages = pkgs
-
-	label := path.Clean(pkg.Path)
 	plan := bumpPlan{
-		cur:   cur,
+		cur:   curVer,
 		next:  next,
 		date:  now,
-		res:   versioning.NewResolver(proj),
-		label: label,
+		res:   versioning.NewResolverFromTree(tree.WithVersion(dir, next.String())),
+		label: dir,
 		updateConfig: func(wd string) (string, error) {
-			did, err := updatePackageVersion(wd, label, next)
+			did, err := updateDirectoryVersion(wd, dir, next)
 			if err != nil || !did {
 				return "", err
 			}
-			return fmt.Sprintf("cairn.yaml (packages/%s)", label), nil
+			return fmt.Sprintf("cairn.yaml (directories/%s)", dir), nil
 		},
 	}
-	return applyBump(wd, cfg, plan, out, palette{on: color})
+	return applyBump(wd, tree, plan, out, palette{on: color})
 }
 
-// runInferredPackageBump advances one declared package whose level was not given: it infers the
-// level from the commits that touched that package since its own last tag, then applies it via
-// the shared per-package path. It fails fast (nothing written) when no release-worthy change can
-// be inferred, so the operator gets the same "say what to bump" feedback the repo-wide path gives.
-func runInferredPackageBump(wd string, cfg *config.Config, idx int, now time.Time, out io.Writer, color, force bool) error {
-	pkg := cfg.Project.Packages[idx]
-	label := path.Clean(pkg.Path)
-	level := inferPackageLevel(wd, cfg, pkg)
+// runInferredPackageBump advances one independent directory whose level was not given: it infers
+// the level from the commits that touched that directory since its own last tag, then applies it
+// via the shared per-package path. It fails fast (nothing written) when no release-worthy change
+// can be inferred, so the operator gets the same "say what to bump" feedback the repo-wide path
+// gives.
+func runInferredPackageBump(wd string, tree *config.Tree, dir string, now time.Time, out io.Writer, color, force bool) error {
+	level := inferPackageLevel(wd, tree, dir)
 	if level == "" {
-		return fmt.Errorf("bump %s needs a level or version (e.g. `cairn bump %s patch`); none could be inferred from commit history touching %s since its last tag", label, label, label)
+		return fmt.Errorf("bump %s needs a level or version (e.g. `cairn bump %s patch`); none could be inferred from commit history touching %s since its last tag", dir, dir, dir)
 	}
-	return runPackageBump(wd, cfg, pkg.Path, level, now, out, color, force)
+	return runPackageBump(wd, tree, dir, level, now, out, color, force)
 }
 
-// runMonorepoSummary is the no-argument flow for a project.packages monorepo: instead of one
-// repo-wide choice, it prints each declared package with the level inferred from its own scoped
-// history and the projected next version, then points at `cairn bump <pkg>` to apply one. It is
-// read-only — a monorepo release advances packages one explicit command at a time.
-func runMonorepoSummary(wd string, cfg *config.Config, out io.Writer, color bool) error {
+// runMonorepoSummary is the no-argument flow for a monorepo with independent directories: instead
+// of one repo-wide choice, it prints each independent directory with the level inferred from its
+// own scoped history and the projected next version, then points at `cairn bump <pkg>` to apply
+// one. It is read-only — a monorepo release advances directories one explicit command at a time.
+func runMonorepoSummary(wd string, tree *config.Tree, out io.Writer, color bool) error {
 	p := palette{on: color}
+	res := versioning.NewResolverFromTree(tree)
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "  "+p.paint(cBold+cCyan, "cairn — per-package bump"))
 	hr(out, p)
-	for _, pkg := range cfg.Project.Packages {
-		label := path.Clean(pkg.Path)
-		level := inferPackageLevel(wd, cfg, pkg)
-		fmt.Fprintf(out, "  %s  %s\n", p.paint(cBold, label), summarizeLevel(p, pkg, level))
+	for _, dir := range tree.Independent() {
+		level := inferPackageLevel(wd, tree, dir)
+		fmt.Fprintf(out, "  %s  %s\n", p.paint(cBold, dir), summarizeLevel(p, res.ForDir(dir).Version, level))
 	}
 	hr(out, p)
 	fmt.Fprintln(out, "  Apply one with "+p.paint(cBold, "cairn bump <pkg>")+" (inferred level) or "+p.paint(cBold, "cairn bump <pkg> <level|version>")+".")
@@ -271,11 +296,11 @@ func runMonorepoSummary(wd string, cfg *config.Config, out io.Writer, color bool
 // summarizeLevel renders one package's inferred bump for the monorepo summary: the level and the
 // projected current→next jump, or a dim "no release-worthy changes" when nothing was inferred (or
 // the current version / level can't be projected, e.g. a malformed literal).
-func summarizeLevel(p palette, pkg config.PackageVersion, level string) string {
+func summarizeLevel(p palette, curLit, level string) string {
 	if level == "" {
 		return p.paint(cDim, "no release-worthy changes")
 	}
-	cur, err := versioning.Parse(pkg.Version)
+	cur, err := versioning.Parse(curLit)
 	if err != nil {
 		return level
 	}
@@ -286,30 +311,31 @@ func summarizeLevel(p palette, pkg config.PackageVersion, level string) string {
 	return fmt.Sprintf("%s  %s → %s", level, cur, p.paint(cBold, next.String()))
 }
 
-// repoPlan is the repo-wide bump plan: every unit moves to one version, so a lockstep resolver
-// (everything resolves to next) drives the manifest, workspace, and version-sync passes, and the
-// config update advances project.canonical_version.
-func repoPlan(cur, next versioning.Version, now time.Time) bumpPlan {
+// repoPlan is the repo-wide bump plan: every lockstep unit moves to one version, so a resolver
+// over the post-bump Tree (the baseline set to next) drives the manifest, workspace, and
+// version-sync passes, and the config update advances the baseline `version`.
+func repoPlan(tree *config.Tree, cur, next versioning.Version, now time.Time) bumpPlan {
 	return bumpPlan{
 		cur:   cur,
 		next:  next,
 		date:  now,
-		res:   versioning.NewResolver(config.Project{CanonicalVersion: next.String()}),
+		res:   versioning.NewResolverFromTree(tree.WithVersion(".", next.String())),
 		label: "",
 		updateConfig: func(wd string) (string, error) {
-			did, err := updateCanonical(wd, next)
+			did, err := updateBaselineVersion(wd, next)
 			if err != nil || !did {
 				return "", err
 			}
-			return "cairn.yaml (canonical_version)", nil
+			return "cairn.yaml (version)", nil
 		},
 	}
 }
 
 // bumpPlan is one fully-decided bump: the version transition, the resolver that maps each unit
 // to its target version, an optional package label (empty = repo-wide), and how to update
-// cairn.yaml (canonical_version vs a single packages entry). It lets applyBump be the one shared
-// tail for the direct, wizard, and per-package paths — they differ only in how the plan is built.
+// cairn.yaml (baseline version vs a single directories entry). It lets applyBump be the one
+// shared tail for the direct, wizard, and per-package paths — they differ only in how the plan
+// is built.
 type bumpPlan struct {
 	cur, next    versioning.Version
 	date         time.Time
@@ -323,11 +349,12 @@ type bumpPlan struct {
 // double-confirming a downgrade in loud red — before applying. A quit or declined prompt
 // aborts cleanly (nil, nothing written). Downgrades are allowed here (unlike runBump's
 // guard) precisely because the operator has just confirmed twice.
-func runBumpWizard(wd string, cfg *config.Config, in io.Reader, out io.Writer, color bool, inferred string) error {
+func runBumpWizard(wd string, tree *config.Tree, in io.Reader, out io.Writer, color bool, inferred string) error {
 	p := palette{on: color}
-	cur, err := versioning.Parse(cfg.Project.CanonicalVersion)
+	root, _ := tree.Resolve(".")
+	cur, err := versioning.Parse(rootVersion(root))
 	if err != nil {
-		return fmt.Errorf("project.canonical_version: %w (set it before bumping)", err)
+		return fmt.Errorf("version: %w (set it before bumping)", err)
 	}
 	r := bufio.NewReader(in)
 
@@ -435,7 +462,7 @@ func runBumpWizard(wd string, cfg *config.Config, in io.Reader, out io.Writer, c
 		fmt.Fprintln(out, "  aborted.")
 		return nil
 	}
-	return applyBump(wd, cfg, repoPlan(cur, next, time.Now()), out, p)
+	return applyBump(wd, tree, repoPlan(tree, cur, next, time.Now()), out, p)
 }
 
 // applyBump writes the plan's next version into the resolved manifests, the version-sync docs,
@@ -443,25 +470,25 @@ func runBumpWizard(wd string, cfg *config.Config, in io.Reader, out io.Writer, c
 // commit/tag. It is the shared tail of the direct, interactive, and per-package paths; the
 // version decision, the resolver, and the config-update strategy are all decided in the plan
 // before it is called. A package-scoped plan (non-empty label) reports and tags the package.
-func applyBump(wd string, cfg *config.Config, plan bumpPlan, out io.Writer, p palette) error {
+func applyBump(wd string, tree *config.Tree, plan bumpPlan, out io.Writer, p palette) error {
 	cur, next := plan.cur, plan.next
 
 	// Pre-flight the changelogs before mutating anything: a release with an empty `[Unreleased]`
 	// section is refused here, so the bump fails with nothing written rather than shipping a
 	// version with no notes. The actual promotions are applied below after the version writes.
-	clWrites, err := planChangelogs(wd, cfg, plan)
+	clWrites, err := planChangelogs(wd, tree, plan)
 	if err != nil {
 		return err
 	}
 
 	var changed []string
-	mans, err := updateManifests(wd, cfg, plan.res)
+	mans, err := updateManifests(wd, tree, plan.res)
 	if err != nil {
 		return err
 	}
 	changed = append(changed, mans...)
 
-	docs, err := versioning.Rewrite(wd, plan.res, cfg.VersionSync.Files)
+	docs, err := versioning.Rewrite(wd, plan.res, resolvedVersionSyncFiles(tree))
 	if err != nil {
 		return err
 	}
@@ -484,6 +511,7 @@ func applyBump(wd string, cfg *config.Config, plan bumpPlan, out io.Writer, p pa
 		changed = append(changed, w.file+" (changelog)")
 	}
 
+	commits := resolvedCommits(tree)
 	fmt.Fprintln(out)
 	if len(changed) == 0 {
 		fmt.Fprintln(out, "  "+p.paint(cYellow, "! nothing to update (already at this version)"))
@@ -508,11 +536,11 @@ func applyBump(wd string, cfg *config.Config, plan bumpPlan, out io.Writer, p pa
 	fmt.Fprintln(out, "    "+p.paint(cDim, "# run the gate"))
 	fmt.Fprintln(out, "    cairn verify")
 	fmt.Fprintln(out, "    "+p.paint(cDim, "# commit and tag (nothing committed for you)"))
-	commit := "git commit"
-	if cfg.Commits.Signoff {
-		commit += " -s"
+	commitCmd := "git commit"
+	if commits.Signoff {
+		commitCmd += " -s"
 	}
-	fmt.Fprintf(out, "    %s -am %q\n", commit, releaseCommitMessage(cfg.Commits.Convention, relSubject))
+	fmt.Fprintf(out, "    %s -am %q\n", commitCmd, releaseCommitMessage(commits.Convention, relSubject))
 	fmt.Fprintf(out, "    git tag %s\n", tag)
 	return nil
 }
@@ -532,14 +560,19 @@ func releaseCommitMessage(convention, ver string) string {
 	}
 }
 
-// computeNext resolves the current and next version from config and the bump argument: an
-// explicit X.Y.Z is honored directly; otherwise the arg is a level interpreted per the
-// project's versioning scheme (semver math, or a date-based CalVer step). It guards the two
-// failure modes the math layer can't see on its own: an unset canonical and a non-increase.
+// computeNext resolves the current and next version from the repo baseline and the bump
+// argument: an explicit X.Y.Z is honored directly; otherwise the arg is a level interpreted per
+// the baseline versioning scheme (semver math, or a date-based CalVer step). It guards the two
+// failure modes the math layer can't see on its own: an unset baseline and a non-increase.
 // force lifts the downgrade guard so an operator can deliberately set a lower version; a
 // no-op (next equal to current) is still refused since there is nothing to apply.
-func computeNext(cfg *config.Config, arg string, now time.Time, force bool) (versioning.Version, versioning.Version, error) {
-	return computeNextFrom("project.canonical_version", cfg.Project.CanonicalVersion, cfg.Project.Versioning, arg, now, force)
+func computeNext(tree *config.Tree, arg string, now time.Time, force bool) (versioning.Version, versioning.Version, error) {
+	root, _ := tree.Resolve(".")
+	scheme := ""
+	if root.Versioning != nil {
+		scheme = *root.Versioning
+	}
+	return computeNextFrom("version", rootVersion(root), scheme, arg, now, force)
 }
 
 // computeNextFrom is the version math shared by the repo-wide and per-package paths: from a
@@ -608,15 +641,15 @@ func describeJump(p palette, cur, next versioning.Version) string {
 	}
 }
 
-// updateManifests sets next in each detected language's version-owned manifest, writing only
-// files that changed. It discovers locations from detection — every detected unit (repo root
-// and each sub-package, including pub-workspace members) contributes its declared manifest
-// filename(s), resolved to a writer via versioning.ManagerFor — so a manifest is updated
-// because the language owns it, not because a dir is listed in cairn.yaml. A declared file
-// with no writer registered yet is skipped; a missing file is skipped; a present file without
-// a locatable version errors. Returned paths are repo-relative and sorted for a clean summary.
-func updateManifests(wd string, cfg *config.Config, res *versioning.Resolver) ([]string, error) {
-	langs, err := detectedEnabled(wd, cfg)
+// updateManifests sets each detected language's version-owned manifest to *its* resolved target
+// version, writing only files that changed. It discovers locations from detection — every detected
+// unit (repo root and each sub-package, including pub-workspace members) contributes its declared
+// manifest filename(s), resolved to a writer via versioning.ManagerFor — so a manifest is updated
+// because the language owns it, not because a dir is listed in cairn.yaml. A declared file with no
+// writer registered yet is skipped; a missing file is skipped; a present file without a locatable
+// version errors. Returned paths are repo-relative and sorted for a clean summary.
+func updateManifests(wd string, tree *config.Tree, res *versioning.Resolver) ([]string, error) {
+	langs, err := detectedEnabled(wd, tree)
 	if err != nil {
 		return nil, err
 	}
@@ -633,7 +666,7 @@ func updateManifests(wd string, cfg *config.Config, res *versioning.Resolver) ([
 	for _, lang := range langs {
 		units = append(units, versioning.ManifestUnit{Dir: lang.Dir, Manifests: lang.VersionManifests})
 		// Each unit is set to *its own* resolved target version (per-package in a monorepo,
-		// canonical otherwise). A unit already at its target is a no-op below and skipped, so a
+		// baseline otherwise). A unit already at its target is a no-op below and skipped, so a
 		// per-package bump touches only the one package whose version actually changed.
 		lit := res.ForDir(lang.Dir).Version
 		if lit == "" {
@@ -689,23 +722,23 @@ func updateManifests(wd string, cfg *config.Config, res *versioning.Resolver) ([
 	return changed, nil
 }
 
-// updateCanonical advances project.canonical_version in cairn.yaml to next via a targeted
+// updateBaselineVersion advances the top-level `version` in cairn.yaml to next via a targeted
 // substitution, preserving quoting and surrounding formatting. It reports whether the file
 // changed; a missing cairn.yaml or already-correct value is a no-op.
-func updateCanonical(wd string, next versioning.Version) (bool, error) {
-	path := filepath.Join(wd, "cairn.yaml")
-	content, err := os.ReadFile(path)
+func updateBaselineVersion(wd string, next versioning.Version) (bool, error) {
+	file := filepath.Join(wd, "cairn.yaml")
+	content, err := os.ReadFile(file)
 	if os.IsNotExist(err) {
 		return false, nil
 	}
 	if err != nil {
 		return false, err
 	}
-	updated := canonicalRe.ReplaceAll(content, []byte("${1}"+next.String()+"${3}"))
+	updated := baselineVersionRe.ReplaceAll(content, []byte("${1}"+next.String()+"${3}"))
 	if string(updated) == string(content) {
 		return false, nil
 	}
-	return true, os.WriteFile(path, updated, 0o644)
+	return true, os.WriteFile(file, updated, 0o644)
 }
 
 // changelogWrite is one pre-computed changelog promotion: the repo-relative file and its new
@@ -727,8 +760,8 @@ type changelogTarget struct {
 // targeted changelog has an empty `[Unreleased]` section — so an empty changelog fails the bump
 // (nothing written) instead of cutting a notes-less release. A missing changelog file is skipped
 // (a package needn't keep one); a standard with no registered writer yet is skipped.
-func planChangelogs(wd string, cfg *config.Config, plan bumpPlan) ([]changelogWrite, error) {
-	targets, err := changelogTargets(wd, cfg, plan)
+func planChangelogs(wd string, tree *config.Tree, plan bumpPlan) ([]changelogWrite, error) {
+	targets, err := changelogTargets(wd, tree, plan)
 	if err != nil {
 		return nil, err
 	}
@@ -773,7 +806,8 @@ func planChangelogs(wd string, cfg *config.Config, plan bumpPlan) ([]changelogWr
 // each package's own changelog discovered as <unit-dir>/<file>. A repo-wide bump covers every
 // detected package; a package-scoped bump covers only the bumped package. Each is resolved to
 // its own target version via the plan's resolver, and the root file is never double-targeted.
-func changelogTargets(wd string, cfg *config.Config, plan bumpPlan) ([]changelogTarget, error) {
+func changelogTargets(wd string, tree *config.Tree, plan bumpPlan) ([]changelogTarget, error) {
+	cl := resolvedChangelog(tree)
 	var targets []changelogTarget
 	seen := map[string]bool{}
 	add := func(t changelogTarget) {
@@ -782,14 +816,14 @@ func changelogTargets(wd string, cfg *config.Config, plan bumpPlan) ([]changelog
 			targets = append(targets, t)
 		}
 	}
-	if plan.label == "" && cfg.Changelog.File != "" {
-		add(changelogTarget{file: cfg.Changelog.File, standard: cfg.Changelog.Standard, version: plan.next})
+	if plan.label == "" && cl.File != "" {
+		add(changelogTarget{file: cl.File, standard: cl.Standard, version: plan.next})
 	}
-	pc := cfg.Changelog.Packages
+	pc := cl.Packages
 	if pc == nil {
 		return targets, nil
 	}
-	dirs, err := changelogPackageDirs(wd, cfg, plan)
+	dirs, err := changelogPackageDirs(wd, tree, plan)
 	if err != nil {
 		return nil, err
 	}
@@ -815,11 +849,11 @@ func changelogTargets(wd string, cfg *config.Config, plan bumpPlan) ([]changelog
 // bumped package for a package-scoped bump, or every detected unit (auto-discovered, no config)
 // for a repo-wide one — mirroring how manifests are discovered from detection rather than dirs
 // listed in cairn.yaml.
-func changelogPackageDirs(wd string, cfg *config.Config, plan bumpPlan) ([]string, error) {
+func changelogPackageDirs(wd string, tree *config.Tree, plan bumpPlan) ([]string, error) {
 	if plan.label != "" {
 		return []string{plan.label}, nil
 	}
-	langs, err := detectedEnabled(wd, cfg)
+	langs, err := detectedEnabled(wd, tree)
 	if err != nil {
 		return nil, err
 	}
@@ -835,67 +869,67 @@ func changelogPackageDirs(wd string, cfg *config.Config, plan bumpPlan) ([]strin
 	return dirs, nil
 }
 
-// detectedEnabled returns the detected languages minus any explicitly disabled in cairn.yaml
-// (`languages.<name>.enabled: false`), so bump — like verify — never bumps or promotes a tree
-// the project opted out of, e.g. a vendored `reference/` port marked disabled.
-func detectedEnabled(wd string, cfg *config.Config) ([]detect.Language, error) {
+// detectedEnabled returns the detected languages minus any pruned by the disable gate or
+// explicitly disabled in the resolved per-directory config (`languages.<name>.enabled: false`),
+// so bump — like verify — never bumps or promotes a tree the project opted out of. The
+// enabled/active decision is resolved entirely by config's Tree, not re-derived here.
+func detectedEnabled(wd string, tree *config.Tree) ([]detect.Language, error) {
 	det, err := detect.Detect(os.DirFS(wd), lookupTool)
 	if err != nil {
 		return nil, err
 	}
 	var langs []detect.Language
 	for _, lang := range det.Languages {
-		if l, ok := cfg.Languages[lang.Name]; ok && !l.Enabled {
-			continue
+		resolved, active := tree.Resolve(lang.Dir)
+		if !active {
+			continue // directory pruned by the absolute disable gate
+		}
+		if l, ok := resolved.Languages[lang.Name]; ok && !l.Enabled {
+			continue // explicitly disabled in cairn.yaml
 		}
 		langs = append(langs, lang)
 	}
 	return langs, nil
 }
 
-// findPackage returns the index of the project.packages entry whose path matches pkgArg
-// (compared cleaned, so a trailing slash or "./" prefix still matches), or -1 when none does.
-func findPackage(pkgs []config.PackageVersion, pkgArg string) int {
+// findIndependent returns the cleaned directory of the independently-versioned package matching
+// pkgArg (compared cleaned, so a trailing slash or "./" prefix still matches), or "" when none
+// of the Tree's Independent() directories match.
+func findIndependent(tree *config.Tree, pkgArg string) string {
 	want := path.Clean(pkgArg)
-	for i, p := range pkgs {
-		if path.Clean(p.Path) == want {
-			return i
+	for _, dir := range tree.Independent() {
+		if dir == want {
+			return dir
 		}
 	}
-	return -1
+	return ""
 }
 
-// declaredPaths lists the declared package paths for the "no such package" error, so an operator
-// who mistypes a package sees the valid choices.
-func declaredPaths(pkgs []config.PackageVersion) string {
-	if len(pkgs) == 0 {
-		return "none — project.packages is empty"
+// declaredPaths lists the independently-versioned directories for the "no such package" error,
+// so an operator who mistypes a package sees the valid choices.
+func declaredPaths(tree *config.Tree) string {
+	dirs := tree.Independent()
+	if len(dirs) == 0 {
+		return "none — no directory declares its own version"
 	}
-	names := make([]string, len(pkgs))
-	for i, p := range pkgs {
-		names[i] = path.Clean(p.Path)
-	}
-	return strings.Join(names, ", ")
+	return strings.Join(dirs, ", ")
 }
 
-// pkgListItemRe matches a YAML sequence-item marker, capturing its leading indent so the bounds
-// of one project.packages entry can be found.
-var pkgListItemRe = regexp.MustCompile(`^(\s*)-\s`)
+// dirKeyRe matches a YAML mapping key line, capturing its leading indent and key name so the
+// bounds of one directories.<path> entry can be found.
+var dirKeyRe = regexp.MustCompile(`^(\s*)([^\s:]+):\s*$`)
 
-// pkgPathLineRe matches a `path: <value>` line (whether the list-item marker line or a
-// continuation), capturing the path value with optional quotes stripped.
-var pkgPathLineRe = regexp.MustCompile(`^\s*(?:-\s+)?path:\s*"?([^"\s]+)"?\s*$`)
+// dirVersionLineRe matches a `version: X.Y.Z` line, capturing the prefix, the version literal,
+// and any trailing quote/space so quoting and layout are preserved on rewrite.
+var dirVersionLineRe = regexp.MustCompile(`^(\s*version:\s*"?)(v?\d+\.\d+\.\d+)("?\s*)$`)
 
-// pkgVersionLineRe matches a `version: X.Y.Z` line within a package entry, capturing the prefix,
-// the version literal, and any trailing quote/space so quoting and layout are preserved on rewrite.
-var pkgVersionLineRe = regexp.MustCompile(`^(\s*(?:-\s+)?version:\s*"?)(v?\d+\.\d+\.\d+)("?\s*)$`)
-
-// updatePackageVersion advances one project.packages entry's version: line in cairn.yaml to next
-// via a targeted line edit, preserving quoting, ordering, and the other entries. It locates the
-// entry by its cleaned path, scopes the rewrite to that one list item (so a sibling entry on the
-// same version is untouched), and reports whether the file changed. A missing cairn.yaml, an
-// absent entry, or an already-correct value is a no-op.
-func updatePackageVersion(wd, pkgPath string, next versioning.Version) (bool, error) {
+// updateDirectoryVersion advances one directories.<path>.version line in the root cairn.yaml to
+// next via a targeted line edit, preserving quoting, ordering, and the other entries. It locates
+// the top-level `directories:` map, then the entry whose key (cleaned) matches dir, scopes the
+// rewrite to that entry's block (so a sibling on the same version is untouched), and reports
+// whether the file changed. A missing cairn.yaml, an absent entry, or an already-correct value
+// is a no-op (the version may live in the directory's own cairn.yaml, which this does not edit).
+func updateDirectoryVersion(wd, dir string, next versioning.Version) (bool, error) {
 	file := filepath.Join(wd, "cairn.yaml")
 	content, err := os.ReadFile(file)
 	if os.IsNotExist(err) {
@@ -906,41 +940,54 @@ func updatePackageVersion(wd, pkgPath string, next versioning.Version) (bool, er
 	}
 	lines := strings.Split(string(content), "\n")
 
-	pathIdx := -1
+	// Find the top-level `directories:` key (column 0).
+	dirsIdx := -1
 	for i, ln := range lines {
-		if m := pkgPathLineRe.FindStringSubmatch(ln); m != nil && path.Clean(m[1]) == pkgPath {
-			pathIdx = i
+		if ln == "directories:" || (strings.HasPrefix(ln, "directories:") && !strings.HasPrefix(ln, " ")) {
+			dirsIdx = i
 			break
 		}
 	}
-	if pathIdx == -1 {
+	if dirsIdx == -1 {
 		return false, nil
 	}
 
-	// Walk back to the entry's list-item marker, then forward to where the item ends (a sibling
-	// item or a dedent), so the version rewrite stays inside this one package entry.
-	start := pathIdx
-	for start > 0 && !pkgListItemRe.MatchString(lines[start]) {
-		start--
-	}
-	marker := pkgListItemRe.FindStringSubmatch(lines[start])
-	if marker == nil {
-		return false, nil // not a sequence item — leave a malformed file untouched
-	}
-	indent := len(marker[1])
-	end := len(lines)
-	for i := start + 1; i < len(lines); i++ {
+	// Walk the entries indented under `directories:`, find the one whose key matches dir.
+	entryStart, entryIndent := -1, -1
+	for i := dirsIdx + 1; i < len(lines); i++ {
 		if strings.TrimSpace(lines[i]) == "" {
 			continue
 		}
-		if lead := len(lines[i]) - len(strings.TrimLeft(lines[i], " ")); lead <= indent {
-			end = i
+		lead := len(lines[i]) - len(strings.TrimLeft(lines[i], " "))
+		if lead == 0 {
+			break // back to a top-level key — out of the directories block
+		}
+		m := dirKeyRe.FindStringSubmatch(lines[i])
+		if m == nil {
+			continue
+		}
+		if entryIndent != -1 && lead > entryIndent {
+			continue // a nested key inside an entry's block, not an entry key
+		}
+		entryIndent = lead
+		if path.Clean(strings.Trim(m[2], `"'`)) == dir {
+			entryStart = i
 			break
 		}
 	}
+	if entryStart == -1 {
+		return false, nil
+	}
 
-	for i := start; i < end; i++ {
-		m := pkgVersionLineRe.FindStringSubmatch(lines[i])
+	// Scope to this entry's block: lines indented deeper than the entry key.
+	for i := entryStart + 1; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) == "" {
+			continue
+		}
+		if lead := len(lines[i]) - len(strings.TrimLeft(lines[i], " ")); lead <= entryIndent {
+			break
+		}
+		m := dirVersionLineRe.FindStringSubmatch(lines[i])
 		if m == nil {
 			continue
 		}
