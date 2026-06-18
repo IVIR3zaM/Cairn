@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/IVIR3zaM/Cairn/internal/changelog"
+	"github.com/IVIR3zaM/Cairn/internal/commit"
 	"github.com/IVIR3zaM/Cairn/internal/config"
 	"github.com/IVIR3zaM/Cairn/internal/detect"
 	"github.com/IVIR3zaM/Cairn/internal/report"
@@ -60,15 +62,68 @@ func newBumpCmd() *cobra.Command {
 			case 1:
 				return runBump(wd, cfg, args[0], time.Now(), out, color, force)
 			}
+			// No level given: infer one from the commit history since the last tag, using the
+			// configured commit convention. The wizard preselects it; a non-interactive run
+			// applies it directly (and errors only if nothing release-worthy could be inferred).
+			inferred := inferLevel(wd, cfg)
 			in := cmd.InOrStdin()
-			if !canPrompt(in) {
-				return fmt.Errorf("bump needs a level or version when not run interactively (e.g. `cairn bump patch`)")
+			if canPrompt(in) {
+				return runBumpWizard(wd, cfg, in, out, color, inferred)
 			}
-			return runBumpWizard(wd, cfg, in, out, color)
+			if inferred == "" {
+				return fmt.Errorf("bump needs a level or version when not run interactively (e.g. `cairn bump patch`); none could be inferred from commit history since the last tag")
+			}
+			return runBump(wd, cfg, inferred, time.Now(), out, color, force)
 		},
 	}
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "allow an explicit downgrade in a direct (non-interactive) bump")
 	return cmd
+}
+
+// inferLevel infers the bump level from commit history using the project's configured commit
+// convention: it classifies every commit since the last tag and takes the highest implied
+// bump (see commit.InferBump). It returns "" — "couldn't infer a level" — when the convention
+// has no registered validator, the repo has no commits/tags/git, or nothing release-worthy was
+// found; callers treat that as "ask for / require an explicit level".
+func inferLevel(wd string, cfg *config.Config) string {
+	v, ok := commit.ValidatorFor(cfg.Commits.Convention)
+	if !ok {
+		return ""
+	}
+	return commit.InferBump(v, commitHistory(wd)).Level()
+}
+
+// commitHistory returns the commit message bodies that a release would cover: everything since
+// the most recent tag, or the entire history when the repo has no tags. It shells out to git
+// (never reinventing the walk) and degrades to an empty slice on any failure — no git, no
+// commits, not a repo — so inference simply finds nothing rather than erroring. `-z` separates
+// commits with NUL so multi-line bodies survive intact.
+func commitHistory(wd string) []string {
+	args := []string{"-C", wd, "log", "-z", "--format=%B"}
+	if tag := lastTag(wd); tag != "" {
+		args = append(args, tag+"..HEAD")
+	}
+	out, err := exec.Command("git", args...).Output()
+	if err != nil {
+		return nil
+	}
+	var msgs []string
+	for _, m := range strings.Split(string(out), "\x00") {
+		if strings.TrimSpace(m) != "" {
+			msgs = append(msgs, m)
+		}
+	}
+	return msgs
+}
+
+// lastTag returns the most recent tag reachable from HEAD, or "" when the repo has none (or
+// isn't a git repo) — in which case the whole history is considered.
+func lastTag(wd string) string {
+	out, err := exec.Command("git", "-C", wd, "describe", "--tags", "--abbrev=0").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // runBump applies a non-interactive bump from arg (a level or explicit version), guarding
@@ -165,7 +220,7 @@ type bumpPlan struct {
 // double-confirming a downgrade in loud red — before applying. A quit or declined prompt
 // aborts cleanly (nil, nothing written). Downgrades are allowed here (unlike runBump's
 // guard) precisely because the operator has just confirmed twice.
-func runBumpWizard(wd string, cfg *config.Config, in io.Reader, out io.Writer, color bool) error {
+func runBumpWizard(wd string, cfg *config.Config, in io.Reader, out io.Writer, color bool, inferred string) error {
 	p := palette{on: color}
 	cur, err := versioning.Parse(cfg.Project.CanonicalVersion)
 	if err != nil {
@@ -176,6 +231,16 @@ func runBumpWizard(wd string, cfg *config.Config, in io.Reader, out io.Writer, c
 	nextPatch, _ := cur.Next("patch")
 	nextMinor, _ := cur.Next("minor")
 	nextMajor, _ := cur.Next("major")
+	byLevel := map[string]versioning.Version{"patch": nextPatch, "minor": nextMinor, "major": nextMajor}
+
+	// rec marks the level inferred from commit history so the operator sees (and can accept
+	// with a bare Enter) the bump the commits imply.
+	rec := func(level string) string {
+		if inferred != "" && level == inferred {
+			return "  " + p.paint(cBold+cCyan, "← inferred from commits")
+		}
+		return ""
+	}
 
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "  "+p.paint(cBold+cCyan, "cairn — version bump"))
@@ -185,20 +250,30 @@ func runBumpWizard(wd string, cfg *config.Config, in io.Reader, out io.Writer, c
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "  How do you want to bump the version?")
 	fmt.Fprintln(out)
-	fmt.Fprintf(out, "    %s) %s  (bug fixes)        %s → %s\n", p.paint(cBold, "1"), p.paint(cGreen, "patch"), cur, p.paint(cBold, nextPatch.String()))
-	fmt.Fprintf(out, "    %s) %s  (new features)     %s → %s\n", p.paint(cBold, "2"), p.paint(cYellow, "minor"), cur, p.paint(cBold, nextMinor.String()))
-	fmt.Fprintf(out, "    %s) %s  (breaking changes) %s → %s\n", p.paint(cBold, "3"), p.paint(cRed, "major"), cur, p.paint(cBold, nextMajor.String()))
+	fmt.Fprintf(out, "    %s) %s  (bug fixes)        %s → %s%s\n", p.paint(cBold, "1"), p.paint(cGreen, "patch"), cur, p.paint(cBold, nextPatch.String()), rec("patch"))
+	fmt.Fprintf(out, "    %s) %s  (new features)     %s → %s%s\n", p.paint(cBold, "2"), p.paint(cYellow, "minor"), cur, p.paint(cBold, nextMinor.String()), rec("minor"))
+	fmt.Fprintf(out, "    %s) %s  (breaking changes) %s → %s%s\n", p.paint(cBold, "3"), p.paint(cRed, "major"), cur, p.paint(cBold, nextMajor.String()), rec("major"))
 	fmt.Fprintf(out, "    %s) %s (type an exact version)\n", p.paint(cBold, "4"), p.paint(cCyan, "custom"))
 	fmt.Fprintf(out, "    %s) quit\n", p.paint(cBold, "q"))
 	fmt.Fprintln(out)
 
+	hint := "[1/2/3/4/q]"
+	if inferred != "" {
+		hint = "[1/2/3/4/q] (Enter = " + inferred + ")"
+	}
 	var next versioning.Version
 	for {
-		choice, err := prompt(r, out, "  "+p.paint(cBold, "choice")+" "+p.paint(cDim, "[1/2/3/4/q]")+" ")
+		choice, err := prompt(r, out, "  "+p.paint(cBold, "choice")+" "+p.paint(cDim, hint)+" ")
 		if err != nil {
 			return err
 		}
 		switch strings.ToLower(choice) {
+		case "":
+			if inferred == "" {
+				fmt.Fprintln(out, "  "+p.paint(cRed, "please choose 1, 2, 3, 4 or q."))
+				continue
+			}
+			next = byLevel[inferred]
 		case "1":
 			next = nextPatch
 		case "2":

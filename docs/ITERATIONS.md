@@ -266,7 +266,8 @@ empty-Unreleased warns; `WriterFor("keepachangelog")` resolves via self-registra
 **Goal:** Validate commit messages and infer the SemVer bump from history. The original
 single-run slice grew past one clean run (a new `commit` context *and* threading inference
 through the 30KB `bump.go`), so it is split: 8a stands up the `CommitValidator` registry +
-conventional convention (validate + classify); 8b wires history-based bump inference using it.
+conventional convention (validate + classify); 8b wires history-based bump inference using it
+(repo-wide, against `canonical_version`); 8c extends inference to be per-package in a monorepo.
 
 ### [x] 8a — CommitValidator registry + conventional convention
 **Read:** AGENTS.md · docs/ARCHITECTURE.md (CommitConventions, extension points) · internal/changelog/changelog.go (registry template) · internal/version
@@ -278,13 +279,40 @@ feat/fix/breaking → minor/patch/major; validate header shape + optional sign-o
 `!`/`BREAKING CHANGE`→major, other→none); sign-off required vs absent enforced; the
 convention resolves via `ValidatorFor` per config (`Conventions` lists registered keys).
 
-### [ ] 8b — `cairn bump` (no level) infers the next bump from commit history
+### [x] 8b — `cairn bump` (no level) infers the next bump from commit history
 **Read:** AGENTS.md · docs/ARCHITECTURE.md (CommitConventions, data flow) · internal/commit · internal/version · internal/cli/bump.go
 **Steps:** Read commits since the last tag (shell out to `git`), classify each via the
 configured `commit.Validator`, take the highest bump, and use it as the default level when
 `cairn bump` is run without a level (wizard preselects it / direct no-arg applies it).
 **Acceptance:** Inference picks the right level on a fixture history; no commits / no tag
 degrades sensibly; the convention resolves via `ValidatorFor` per config.
+> Landed repo-wide only: `inferLevel` runs a path-blind `git log <lastTag>..HEAD` and feeds the
+> highest level to the canonical/lockstep path; the wizard uses it purely as a preselect hint.
+> Per-package inference (mapping commits to a `project.packages` entry) is 8c.
+
+### [ ] 8c — Per-package bump inference (monorepo, path-scoped history)
+**Goal:** Make inference package-aware so a monorepo with independent `project.packages` versions
+gets the right level *per package* from the commits that actually touched it — closing the gap
+left by 8b, where inference is repo-wide and only ever steps `canonical_version`. Each declared
+package infers its own level from its own history since *its* last tag, and that flows through the
+existing per-package `bump` path (`runPackageBump`) and a monorepo-aware wizard.
+**Read:** AGENTS.md · docs/ARCHITECTURE.md (CommitConventions, data flow, Versioning) ·
+internal/commit · internal/version/resolver.go · internal/cli/bump.go
+**Steps:**
+- Path-scoped history: a `commitHistory` variant that takes a package dir and runs
+  `git log <pkgLastTag>..HEAD -- <pkg.path>`, where `pkgLastTag` matches the package's tag scheme
+  (`<pkg>-v*`, the form `applyBump` already prints for a package-scoped bump) and falls back to
+  whole history when the package has no tag yet.
+- `inferPackageLevel(wd, cfg, pkg)` resolving the convention via `ValidatorFor` and classifying
+  that package's commits; reuse `commit.InferBump`.
+- Wire it: `cairn bump <pkg>` (one arg, a declared package, no level) infers that package's level
+  and applies it via `runPackageBump`; the no-argument flow in a `project.packages` monorepo offers
+  a per-package summary (each package + its inferred level) rather than a single repo-wide choice.
+  Keep the repo-wide canonical/lockstep path unchanged when no `packages` are declared.
+**Acceptance:** in the mixed-language monorepo fixture, two packages with different commit
+histories each infer their own level (a `feat:` touching only pkg_a infers `minor` for pkg_a and
+`none` for pkg_b); a package with no tag yet degrades to whole-history; a repo with only
+`canonical_version` behaves exactly as 8b (repo-wide inference unchanged).
 
 ## [ ] 9 — Wiring: hooks + CI generation
 **Goal:** `init`'s outputs — install git hooks and generate a CI workflow calling `verify`.

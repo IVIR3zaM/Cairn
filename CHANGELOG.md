@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `cairn bump` with no level now infers the next bump from commit history: it classifies every
+  commit since the last tag via the configured `commit.Validator` (`commit.InferBump` takes the
+  highest implied level), then the wizard preselects it (bare Enter accepts) and a non-interactive
+  run applies it directly — degrading sensibly when no tag/commits/release-worthy change is found.
 - CommitConventions context (`internal/commit`): a self-registering `CommitValidator` registry
   (`commit.ValidatorFor`/`Conventions`) with `conventional` as the first convention — it validates
   a Conventional Commits header (`type(scope)?!?: description`, known-type set, optional DCO

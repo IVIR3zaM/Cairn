@@ -410,7 +410,7 @@ func TestWizardAppliesOnConfirm(t *testing.T) {
 	cfg.Project.CanonicalVersion = "1.2.0"
 
 	var out bytes.Buffer
-	if err := runBumpWizard(dir, cfg, strings.NewReader("2\ny\n"), &out, false); err != nil {
+	if err := runBumpWizard(dir, cfg, strings.NewReader("2\ny\n"), &out, false, ""); err != nil {
 		t.Fatalf("wizard: %v", err)
 	}
 	if got := read(t, cairn); !strings.Contains(got, `canonical_version: "1.3.0"`) {
@@ -418,6 +418,27 @@ func TestWizardAppliesOnConfirm(t *testing.T) {
 	}
 	if s := out.String(); !strings.Contains(s, "Bumped 1.2.0 → 1.3.0") {
 		t.Errorf("missing banner:\n%s", s)
+	}
+}
+
+// TestWizardPreselectsInferred proves the inferred level is the wizard's default: a bare
+// Enter (empty choice) accepts it, so feeding "" then a confirm applies the inferred bump.
+func TestWizardPreselectsInferred(t *testing.T) {
+	dir := t.TempDir()
+	cairn := writeFile(t, dir, "cairn.yaml", "project:\n  canonical_version: \"1.2.0\"\n")
+	cfg := config.Default()
+	cfg.Project.CanonicalVersion = "1.2.0"
+
+	var out bytes.Buffer
+	// Empty choice (Enter) + confirm, with "minor" inferred ⇒ 1.3.0.
+	if err := runBumpWizard(dir, cfg, strings.NewReader("\ny\n"), &out, false, "minor"); err != nil {
+		t.Fatalf("wizard: %v", err)
+	}
+	if got := read(t, cairn); !strings.Contains(got, `canonical_version: "1.3.0"`) {
+		t.Errorf("inferred level not applied on Enter: %s", got)
+	}
+	if s := out.String(); !strings.Contains(s, "inferred from commits") {
+		t.Errorf("menu should mark the inferred level:\n%s", s)
 	}
 }
 
@@ -429,7 +450,7 @@ func TestWizardQuitLeavesFilesUntouched(t *testing.T) {
 	cfg.Project.CanonicalVersion = "1.2.0"
 
 	var out bytes.Buffer
-	if err := runBumpWizard(dir, cfg, strings.NewReader("q\n"), &out, false); err != nil {
+	if err := runBumpWizard(dir, cfg, strings.NewReader("q\n"), &out, false, ""); err != nil {
 		t.Fatalf("wizard: %v", err)
 	}
 	if got := read(t, cairn); !strings.Contains(got, "1.2.0") || strings.Contains(got, "1.3.0") {
@@ -451,7 +472,7 @@ func TestWizardDowngradeNeedsDoubleConfirm(t *testing.T) {
 
 	var out bytes.Buffer
 	// choice 4 (custom) → 1.0.0 → downgrade confirm → second confirm → apply confirm.
-	if err := runBumpWizard(dir, cfg, strings.NewReader("4\n1.0.0\ny\ny\ny\n"), &out, false); err != nil {
+	if err := runBumpWizard(dir, cfg, strings.NewReader("4\n1.0.0\ny\ny\ny\n"), &out, false, ""); err != nil {
 		t.Fatalf("wizard: %v", err)
 	}
 	if got := read(t, cairn); !strings.Contains(got, `canonical_version: "1.0.0"`) {
