@@ -440,8 +440,16 @@ logic); a single-package repo with no `directories:` behaves exactly as before; 
 > `verify.go`/`bump.go`, drops legacy fields across the `config` package, and rewrites ARCHITECTURE).
 > Per its own "if one grows, split it" note it is split below: **10a-iii-a** makes `version.Resolver`
 > constructable from `config.Tree` (additive — the legacy `config.Project` constructor stays, build
-> green); **10a-iii-b** refits `verify` to resolve languages/strict/version_sync per-directory via the
-> Tree; **10a-iii-c** refits `bump`, drops the legacy fields, and rewrites ARCHITECTURE.
+> green); **10a-iii-doc** rewrites ARCHITECTURE to the new schema (the design is already agreed and the
+> `config` model already implemented, so the source-of-truth doc lands *ahead* of the remaining code
+> refits instead of trailing them); **10a-iii-b** refits `verify` to resolve languages/strict/
+> version_sync per-directory via the Tree; **10a-iii-c** refits `bump` and drops the legacy fields.
+>
+> Why a dedicated doc slice: ARCHITECTURE.md is declared "the single source of truth for the design,"
+> yet 10a-i/-ii/-iii-a already moved the code to the new per-directory model while the doc still
+> describes the old `project.*`/`languages.*.dir`/`changelog.packages`/`version_sync.files` schema. The
+> doc must catch up *now* so a later agent doesn't read the stale schema as truth and undo the new
+> direction.
 
 ##### [x] 10a-iii-a — `version.Resolver` constructable from `config.Tree`
 **Read:** AGENTS.md · internal/config/{config,tree,directory}.go · internal/version/resolver.go · internal/version/resolver_test.go
@@ -453,6 +461,33 @@ unchanged — this slice is purely additive.
 baseline lockstep + a `directories.<path>` override + a nested scheme override); the legacy
 constructor is unchanged; build and tests green.
 
+##### [x] 10a-iii-doc — Rewrite ARCHITECTURE to the per-directory schema (source-of-truth catch-up)
+**Goal:** Make `docs/ARCHITECTURE.md` describe the new per-directory config model that 10a-i/-ii/-iii-a
+already implemented, so the declared single-source-of-truth doc no longer lags the code. Docs-only — no
+code change — and doable now (no dependency on the `verify`/`bump` refits in 10a-iii-b/-c).
+**Read:** AGENTS.md · docs/ARCHITECTURE.md · internal/config/{config,directory,tree}.go
+**Steps:**
+- Rewrite the "config aggregate — `cairn.yaml`" YAML block to the new shape: repo baseline as plain
+  top-level keys (`version`, `versioning`, `languages` tool knobs only — no `dir`, `verify`, `commits`,
+  `changelog`, `version_sync`, `hooks`, `ci`, `addons`) plus the dedicated format-version `schema` key,
+  and the single `directories:` map of override blocks (each a `<path> → Directory`, with `enabled`
+  and any baseline key). Show a nested `<path>/cairn.yaml` carrying the same override block. Remove the
+  old `project.canonical_version`/`project.packages`, `languages.*.dir`, `changelog.packages`, and
+  `version_sync.files` shapes.
+- Add a "Per-directory config & precedence" subsection capturing the agreed decisions: the override
+  block is one type reused in three forms (root baseline, root `directories.<path>` entry, a
+  directory's own `cairn.yaml`); the field-level low→high cascade (baseline < own-file ancestors <
+  root `directories.<path>` ancestors — root is the authority) with the two worked strict examples;
+  the absolute disable gate (root-disabled subtree is never read/detected/verified); own-`version` ⇒
+  independent (own tag `<dir>-v<version>` + own changelog), absent ⇒ lockstep on the repo `version`;
+  and that `config` owns the cascade so CLI contexts ask `Resolve(dir)` rather than reading YAML.
+- Reconcile the Versioning and Detection sections + the ADRs with the new model (note in ADR-003 that
+  the single aggregate now nests per-directory override blocks; cross-link the precedence subsection).
+**Acceptance:** ARCHITECTURE's schema block and prose match the implemented `config.Directory`/`Tree`
+model (no dropped field survives in the doc); the precedence subsection states the layered model,
+absolute disable, and own-`version`⇒independent; 10a-iii-b/-c need no further ARCHITECTURE edits beyond
+spot reconciliation. Docs-only; build untouched.
+
 ##### [ ] 10a-iii-b — Refit `verify` to resolve per-directory via the Tree
 **Read:** AGENTS.md · internal/config/tree.go · internal/cli/verify.go · internal/version/resolver.go
 **Steps:** `verify` builds a `config.Tree` and resolves each detected unit's settings (languages
@@ -461,14 +496,15 @@ resolver, dropping its direct `cfg.Project`/`cfg.VersionSync`/`StrictFor` reads.
 **Acceptance:** per-directory honesty + strict resolution flow through the Tree; single-package repo
 behaves as before; CLI verify contains no precedence logic.
 
-##### [ ] 10a-iii-c — Refit `bump` + drop legacy fields + ARCHITECTURE rewrite
-**Read:** AGENTS.md · docs/ARCHITECTURE.md · internal/cli/bump.go · internal/config/{config,tree}.go · internal/detect/detect.go
+##### [ ] 10a-iii-c — Refit `bump` + drop legacy fields
+**Read:** AGENTS.md · internal/cli/bump.go · internal/config/{config,tree}.go · internal/detect/detect.go
 **Steps:** `bump` and detection consume the Tree; remove the dropped fields (`project.*`,
-`changelog.packages`, `version_sync.files`, `languages.*.dir`) and the legacy resolver constructor;
-rewrite the ARCHITECTURE config-schema block + add the per-directory precedence subsection; reconcile
-Versioning/Detection + ADRs.
+`changelog.packages`, `version_sync.files`, `languages.*.dir`) and the legacy resolver constructor.
+(The ARCHITECTURE rewrite moved to 10a-iii-doc; here, only spot-reconcile the doc if a field name or
+behavior changed during the refit.)
 **Acceptance:** the cascade lives in `config` (CLI contexts contain no YAML-reading or precedence
-logic); a single-package repo with no `directories:` behaves exactly as before; ARCHITECTURE matches.
+logic); a single-package repo with no `directories:` behaves exactly as before; ARCHITECTURE still
+matches the code.
 
 ### [ ] 10b — Onboarding wizard (`init`)
 **Goal:** The headline UX: a fast, friendly `cairn init`, on top of the 10a config model.
