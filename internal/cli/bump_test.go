@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -11,6 +12,27 @@ import (
 	"github.com/IVIR3zaM/Cairn/internal/config"
 	versioning "github.com/IVIR3zaM/Cairn/internal/version"
 )
+
+// gitCommit stages the given pathspecs and records a commit with msg in dir, so a test can build
+// the path-scoped history per-package inference reads. It configures an isolated identity and
+// disables signing so it runs the same everywhere (CI included).
+func gitCommit(t *testing.T, dir, msg string, paths ...string) {
+	t.Helper()
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".git")); os.IsNotExist(err) {
+		run("init")
+		run("config", "commit.gpgsign", "false")
+	}
+	run(append([]string{"add", "--"}, paths...)...)
+	run("commit", "-m", msg)
+}
 
 // writeFile is a tiny helper so each test reads as a flat list of fixtures.
 func writeFile(t *testing.T, dir, rel, content string) string {
@@ -497,5 +519,64 @@ func TestComputeNextCalVer(t *testing.T) {
 	}
 	if next.String() != "2026.6.0" {
 		t.Errorf("calver next = %s, want 2026.6.0", next)
+	}
+}
+
+// TestInferredPackageBump is the 8c acceptance: in a mixed-language monorepo, a `feat:` that
+// touched only pkg_a infers `minor` for pkg_a and `none` for pkg_b (each from its own scoped
+// history), and `cairn bump <pkg>` with no level applies the inferred level to that package
+// alone. Neither package has a tag yet, so inference degrades to each package's whole history.
+func TestInferredPackageBump(t *testing.T) {
+	dir := t.TempDir()
+	cairn := writeFile(t, dir, "cairn.yaml",
+		"project:\n  canonical_version: \"9.9.9\"\n  packages:\n    - path: pkg_a\n      version: 1.0.0\n    - path: pkg_b\n      version: 2.0.0\n")
+	pkgA := writeFile(t, dir, "pkg_a/pubspec.yaml", "name: pkg_a\nversion: 1.0.0\n")
+	pkgB := writeFile(t, dir, "pkg_b/pubspec.yaml", "name: pkg_b\nversion: 2.0.0\n")
+	gitCommit(t, dir, "chore: scaffold", "cairn.yaml", "pkg_a", "pkg_b")
+	writeFile(t, dir, "pkg_a/feature.txt", "new\n")
+	gitCommit(t, dir, "feat: add a feature to pkg_a", "pkg_a/feature.txt")
+
+	cfg := config.Default()
+	cfg.Project.CanonicalVersion = "9.9.9"
+	cfg.Project.Packages = []config.PackageVersion{
+		{Path: "pkg_a", Version: "1.0.0"},
+		{Path: "pkg_b", Version: "2.0.0"},
+	}
+
+	if got := inferPackageLevel(dir, cfg, cfg.Project.Packages[0]); got != "minor" {
+		t.Errorf("pkg_a inferred level = %q, want minor", got)
+	}
+	if got := inferPackageLevel(dir, cfg, cfg.Project.Packages[1]); got != "" {
+		t.Errorf("pkg_b inferred level = %q, want none", got)
+	}
+
+	var out bytes.Buffer
+	if err := runInferredPackageBump(dir, cfg, 0, time.Now(), &out, false, false); err != nil {
+		t.Fatalf("runInferredPackageBump: %v", err)
+	}
+	if got := read(t, pkgA); !strings.Contains(got, "version: 1.1.0") {
+		t.Errorf("pkg_a not advanced to 1.1.0: %s", got)
+	}
+	if got := read(t, pkgB); !strings.Contains(got, "version: 2.0.0") {
+		t.Errorf("pkg_b must be untouched: %s", got)
+	}
+	if got := read(t, cairn); !strings.Contains(got, "      version: 1.1.0") || !strings.Contains(got, `canonical_version: "9.9.9"`) {
+		t.Errorf("cairn.yaml: pkg_a should advance, canonical stay: %s", got)
+	}
+}
+
+// TestInferredPackageBumpNoChanges proves the fail-fast: a declared package with no
+// release-worthy commits since its last tag refuses the inferred bump (nothing written) and
+// names the package, rather than silently doing nothing.
+func TestInferredPackageBumpNoChanges(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "pkg_a/pubspec.yaml", "name: pkg_a\nversion: 1.0.0\n")
+	gitCommit(t, dir, "chore: scaffold", "pkg_a")
+
+	cfg := config.Default()
+	cfg.Project.Packages = []config.PackageVersion{{Path: "pkg_a", Version: "1.0.0"}}
+	err := runInferredPackageBump(dir, cfg, 0, time.Now(), &bytes.Buffer{}, false, false)
+	if err == nil || !strings.Contains(err.Error(), "pkg_a") {
+		t.Fatalf("want a no-inference error naming pkg_a, got %v", err)
 	}
 }

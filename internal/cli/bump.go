@@ -60,11 +60,22 @@ func newBumpCmd() *cobra.Command {
 			case 2:
 				return runPackageBump(wd, cfg, args[0], args[1], time.Now(), out, color, force)
 			case 1:
+				// `cairn bump <pkg>` (a declared package, no level) infers that package's level
+				// from its own path-scoped history and advances only it; otherwise the lone arg is
+				// a repo-wide level/version.
+				if idx := findPackage(cfg.Project.Packages, args[0]); idx >= 0 {
+					return runInferredPackageBump(wd, cfg, idx, time.Now(), out, color, force)
+				}
 				return runBump(wd, cfg, args[0], time.Now(), out, color, force)
 			}
-			// No level given: infer one from the commit history since the last tag, using the
-			// configured commit convention. The wizard preselects it; a non-interactive run
-			// applies it directly (and errors only if nothing release-worthy could be inferred).
+			// No argument. In a project.packages monorepo, levels are per-package, so show a
+			// per-package inferred summary rather than a single repo-wide choice.
+			if len(cfg.Project.Packages) > 0 {
+				return runMonorepoSummary(wd, cfg, out, color)
+			}
+			// Repo-wide (no packages): infer one level from the commit history since the last tag,
+			// using the configured commit convention. The wizard preselects it; a non-interactive
+			// run applies it directly (and errors only if nothing release-worthy could be inferred).
 			inferred := inferLevel(wd, cfg)
 			in := cmd.InOrStdin()
 			if canPrompt(in) {
@@ -93,15 +104,33 @@ func inferLevel(wd string, cfg *config.Config) string {
 	return commit.InferBump(v, commitHistory(wd)).Level()
 }
 
-// commitHistory returns the commit message bodies that a release would cover: everything since
-// the most recent tag, or the entire history when the repo has no tags. It shells out to git
-// (never reinventing the walk) and degrades to an empty slice on any failure — no git, no
-// commits, not a repo — so inference simply finds nothing rather than erroring. `-z` separates
-// commits with NUL so multi-line bodies survive intact.
+// commitHistory returns the commit message bodies that a repo-wide release would cover:
+// everything since the most recent tag, or the entire history when the repo has no tags. It is
+// the path-blind aggregate inference (8b) uses for the canonical/lockstep bump.
 func commitHistory(wd string) []string {
+	return gitLogMessages(wd, lastTag(wd), "")
+}
+
+// commitHistoryFor returns the commit message bodies a single package's release would cover:
+// commits since the package's own last tag (`<pkg>-v*`, the form a package-scoped bump prints)
+// that actually touched its directory. With no tag yet it degrades to the package's whole
+// history, so a never-released package still infers from everything that built it.
+func commitHistoryFor(wd, pkgPath string) []string {
+	return gitLogMessages(wd, lastPackageTag(wd, pkgPath), pkgPath)
+}
+
+// gitLogMessages shells out to git (never reinventing the walk) for the commit bodies in
+// tag..HEAD (or all of history when tag is ""), optionally restricted to a pathspec so a
+// monorepo package only sees the commits that touched it. It degrades to an empty slice on any
+// failure — no git, no commits, not a repo — so inference finds nothing rather than erroring.
+// `-z` separates commits with NUL so multi-line bodies survive intact.
+func gitLogMessages(wd, tag, pathspec string) []string {
 	args := []string{"-C", wd, "log", "-z", "--format=%B"}
-	if tag := lastTag(wd); tag != "" {
+	if tag != "" {
 		args = append(args, tag+"..HEAD")
+	}
+	if pathspec != "" {
+		args = append(args, "--", pathspec)
 	}
 	out, err := exec.Command("git", args...).Output()
 	if err != nil {
@@ -124,6 +153,29 @@ func lastTag(wd string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// lastPackageTag returns the most recent tag matching this package's scheme (`<pkg>-v*`, what
+// applyBump prints for a package-scoped bump), or "" when the package has never been tagged —
+// in which case the package's whole history is considered. label is the cleaned package path.
+func lastPackageTag(wd, label string) string {
+	out, err := exec.Command("git", "-C", wd, "describe", "--tags", "--abbrev=0", "--match", label+"-v*").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// inferPackageLevel infers a single package's bump level from the commits that touched its
+// directory since its own last tag, classified via the project's configured commit convention
+// (see commit.InferBump). It returns "" — "nothing release-worthy" — when the convention has no
+// validator, or the package has no qualifying commits; callers treat that as "require/skip".
+func inferPackageLevel(wd string, cfg *config.Config, pkg config.PackageVersion) string {
+	v, ok := commit.ValidatorFor(cfg.Commits.Convention)
+	if !ok {
+		return ""
+	}
+	return commit.InferBump(v, commitHistoryFor(wd, path.Clean(pkg.Path))).Level()
 }
 
 // runBump applies a non-interactive bump from arg (a level or explicit version), guarding
@@ -181,6 +233,57 @@ func runPackageBump(wd string, cfg *config.Config, pkgArg, arg string, now time.
 		},
 	}
 	return applyBump(wd, cfg, plan, out, palette{on: color})
+}
+
+// runInferredPackageBump advances one declared package whose level was not given: it infers the
+// level from the commits that touched that package since its own last tag, then applies it via
+// the shared per-package path. It fails fast (nothing written) when no release-worthy change can
+// be inferred, so the operator gets the same "say what to bump" feedback the repo-wide path gives.
+func runInferredPackageBump(wd string, cfg *config.Config, idx int, now time.Time, out io.Writer, color, force bool) error {
+	pkg := cfg.Project.Packages[idx]
+	label := path.Clean(pkg.Path)
+	level := inferPackageLevel(wd, cfg, pkg)
+	if level == "" {
+		return fmt.Errorf("bump %s needs a level or version (e.g. `cairn bump %s patch`); none could be inferred from commit history touching %s since its last tag", label, label, label)
+	}
+	return runPackageBump(wd, cfg, pkg.Path, level, now, out, color, force)
+}
+
+// runMonorepoSummary is the no-argument flow for a project.packages monorepo: instead of one
+// repo-wide choice, it prints each declared package with the level inferred from its own scoped
+// history and the projected next version, then points at `cairn bump <pkg>` to apply one. It is
+// read-only — a monorepo release advances packages one explicit command at a time.
+func runMonorepoSummary(wd string, cfg *config.Config, out io.Writer, color bool) error {
+	p := palette{on: color}
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "  "+p.paint(cBold+cCyan, "cairn — per-package bump"))
+	hr(out, p)
+	for _, pkg := range cfg.Project.Packages {
+		label := path.Clean(pkg.Path)
+		level := inferPackageLevel(wd, cfg, pkg)
+		fmt.Fprintf(out, "  %s  %s\n", p.paint(cBold, label), summarizeLevel(p, pkg, level))
+	}
+	hr(out, p)
+	fmt.Fprintln(out, "  Apply one with "+p.paint(cBold, "cairn bump <pkg>")+" (inferred level) or "+p.paint(cBold, "cairn bump <pkg> <level|version>")+".")
+	return nil
+}
+
+// summarizeLevel renders one package's inferred bump for the monorepo summary: the level and the
+// projected current→next jump, or a dim "no release-worthy changes" when nothing was inferred (or
+// the current version / level can't be projected, e.g. a malformed literal).
+func summarizeLevel(p palette, pkg config.PackageVersion, level string) string {
+	if level == "" {
+		return p.paint(cDim, "no release-worthy changes")
+	}
+	cur, err := versioning.Parse(pkg.Version)
+	if err != nil {
+		return level
+	}
+	next, err := cur.Next(level)
+	if err != nil {
+		return level
+	}
+	return fmt.Sprintf("%s  %s → %s", level, cur, p.paint(cBold, next.String()))
 }
 
 // repoPlan is the repo-wide bump plan: every unit moves to one version, so a lockstep resolver

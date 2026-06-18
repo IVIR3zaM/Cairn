@@ -290,7 +290,7 @@ degrades sensibly; the convention resolves via `ValidatorFor` per config.
 > highest level to the canonical/lockstep path; the wizard uses it purely as a preselect hint.
 > Per-package inference (mapping commits to a `project.packages` entry) is 8c.
 
-### [ ] 8c — Per-package bump inference (monorepo, path-scoped history)
+### [x] 8c — Per-package bump inference (monorepo, path-scoped history)
 **Goal:** Make inference package-aware so a monorepo with independent `project.packages` versions
 gets the right level *per package* from the commits that actually touched it — closing the gap
 left by 8b, where inference is repo-wide and only ever steps `canonical_version`. Each declared

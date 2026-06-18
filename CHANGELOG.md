@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Per-package bump inference (monorepo): `cairn bump <pkg>` with no level infers that package's
+  level from the commits that touched its directory since its own `<pkg>-v*` tag (degrading to the
+  package's whole history when untagged), then advances only it. The no-argument flow in a
+  `project.packages` monorepo now prints a per-package inferred summary instead of a single
+  repo-wide choice; repos with only `canonical_version` keep the repo-wide behavior unchanged.
 - `cairn bump` with no level now infers the next bump from commit history: it classifies every
   commit since the last tag via the configured `commit.Validator` (`commit.InferBump` takes the
   highest implied level), then the wizard preselects it (bare Enter accepts) and a non-interactive
