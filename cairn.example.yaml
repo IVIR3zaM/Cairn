@@ -70,10 +70,17 @@ version_sync:
         - "mylib:{VERSION}"
         - "version-{VERSION}"
 
+# Which cairn jobs each git hook runs — you own these lists; init only falls back to them.
+# Cairn installs the scripts into .cairn/hooks/ and points git at them via
+# `git config core.hooksPath` (tracked + shared, unlike the per-clone .git/hooks/).
+#   pre_commit runs BEFORE the commit is created, so a failing job blocks it (a gate).
+#   commit_msg receives the message file and lints it. pre_push runs before `git push`.
+# Trade per-commit gating for fast commits by moving verify to pre_push; drop a hook
+# entirely with an empty list (e.g. `pre_commit: []` installs no pre-commit hook at all).
 hooks:
   pre_commit: [verify]
   commit_msg: [commit-lint]
-  pre_push: []
+  pre_push: []                   # e.g. [verify] to gate pushes instead of commits
 
 ci:
   provider: github               # github (others later)

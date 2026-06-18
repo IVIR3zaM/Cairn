@@ -17,6 +17,10 @@ import (
 type style struct {
 	// unreleased matches the unreleased heading (e.g. `## [Unreleased]` or `## Unreleased`).
 	unreleased *regexp.Regexp
+	// signature matches a line that is distinctive to this standard, used by Detect to
+	// recognise an existing changelog so `cairn init` can record the right standard. It must be
+	// specific enough not to fire on a foreign format's file.
+	signature *regexp.Regexp
 	// released formats the new released heading for a version dated date.
 	released func(ver version.Version, date time.Time) string
 	// links, when true, maintains Keep a Changelog compare-link references at the bottom.

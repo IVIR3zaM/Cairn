@@ -151,13 +151,15 @@ func TestDetectSyncPatterns(t *testing.T) {
 	doc := "# proj\n\n" +
 		"coordinate mylib:1.2.3 and badge version-1.2.3-blue here.\n" +
 		"wrapped `proj@1.2.3`. v1.2.3 standalone, plain 1.2.3 in prose.\n" +
+		"xml <version>1.2.3</version> tag here.\n" +
 		"unrelated 11.2.33 and 1.2.30 stay untouched.\n"
 
 	got := DetectSyncPatterns(doc, "1.2.3")
 
 	// Distinctive surrounding tokens become patterns; the version number is replaced by the
-	// placeholder and outer wrappers/punctuation are trimmed.
-	for _, w := range []string{"mylib:{VERSION}", "version-{VERSION}-blue", "proj@{VERSION}"} {
+	// placeholder and outer wrappers/punctuation are trimmed. A balanced bracket pair wrapping
+	// the whole token (the xml tag) is kept intact rather than peeled asymmetrically.
+	for _, w := range []string{"mylib:{VERSION}", "version-{VERSION}-blue", "proj@{VERSION}", "<version>{VERSION}</version>"} {
 		if !contains(got, w) {
 			t.Errorf("missing pattern %q in %q", w, got)
 		}

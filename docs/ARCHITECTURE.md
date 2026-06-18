@@ -95,7 +95,10 @@ version_sync:                     # the doc-honesty check (Cairn's signature fea
   files:
     - { path: README.md, patterns: ["mylib:{VERSION}", "version-{VERSION}"] }
 
-hooks: { pre_commit: [verify], commit_msg: [commit-lint], pre_push: [] }
+hooks:                            # which cairn jobs each git hook runs; you own this list.
+  pre_commit: [verify]            #   runs BEFORE the commit is created — a gate that blocks it
+  commit_msg: [commit-lint]       #   on failure. Move `verify` to pre_push for fast commits +
+  pre_push:   []                  #   a push-time gate, or set pre_commit: [] to drop it entirely.
 ci:    { provider: github, jobs: [verify] }
 
 addons: { editorconfig: false, license_header: false, branch_name: false }

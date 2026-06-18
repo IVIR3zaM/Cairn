@@ -17,6 +17,29 @@ func mustParse(t *testing.T, s string) version.Version {
 	return v
 }
 
+// Detect recognises a Keep a Changelog file by its bracketed headings (both an `[Unreleased]`
+// section and a released `[x.y.z] - date` heading), and reports nothing for a foreign or empty
+// file — so `cairn init` records the changelog block only when it is confident of the format.
+func TestDetectKeepAChangelog(t *testing.T) {
+	for _, body := range []string{
+		"# Changelog\n\n## [Unreleased]\n\n### Added\n- thing\n",
+		"# Changelog\n\n## [1.2.3] - 2026-06-09\n\n### Fixed\n- bug\n",
+	} {
+		if got, ok := Detect([]byte(body)); !ok || got != "keepachangelog" {
+			t.Errorf("Detect(%q) = %q, %v; want keepachangelog, true", body, got, ok)
+		}
+	}
+	for _, body := range []string{
+		"",
+		"# Changelog\n\n## Unreleased\n\n- plain heading, no brackets\n",
+		"just some prose with no changelog headings at all\n",
+	} {
+		if got, ok := Detect([]byte(body)); ok {
+			t.Errorf("Detect(%q) = %q, true; want no match", body, got)
+		}
+	}
+}
+
 // WriterFor resolves a registered standard via self-registration and reports the absence of
 // an unregistered one (so bump can skip promotion for a future-only standard).
 func TestWriterForResolvesRegistered(t *testing.T) {

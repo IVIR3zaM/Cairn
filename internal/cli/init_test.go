@@ -156,10 +156,12 @@ func TestInitDetectsVersionSyncFromReadme(t *testing.T) {
 	}
 }
 
-// TestInitDetectsSignoffFromHistory: init must decide commits.signoff from the repo's history,
-// not write a blind default. A history where every commit is signed off enables sign-off; an
-// unsigned history leaves the commits block omitted (rides the default-off policy).
-func TestInitDetectsSignoffFromHistory(t *testing.T) {
+// TestInitDetectsCommitPolicyFromHistory: init decides the commits block from the repo's
+// history, not a blind default. A conventional history records the convention; a signed-off
+// history additionally enables sign-off; a signed-off-less, non-conventional history is
+// unrecognisable, so init makes no claim and omits the block entirely.
+func TestInitDetectsCommitPolicyFromHistory(t *testing.T) {
+	// Signed-off + conventional: convention recorded and sign-off enabled.
 	signedDir := t.TempDir()
 	gitInitWithUser(t, signedDir)
 	writeFile(t, signedDir, "go.mod", "module example.com/x\n\ngo 1.23\n")
@@ -171,10 +173,11 @@ func TestInitDetectsSignoffFromHistory(t *testing.T) {
 		t.Fatalf("runInit (signed): %v", err)
 	}
 	root, _ := loadTree(t, signedDir).Resolve(".")
-	if root.Commits == nil || !root.Commits.Signoff {
-		t.Errorf("signed-off history should enable commits.signoff, got %+v", root.Commits)
+	if root.Commits == nil || !root.Commits.Signoff || root.Commits.Convention != "conventional" {
+		t.Errorf("signed-off conventional history should record convention + sign-off, got %+v", root.Commits)
 	}
 
+	// Unsigned but conventional: the convention is a fact worth recording; sign-off stays off.
 	unsignedDir := t.TempDir()
 	gitInitWithUser(t, unsignedDir)
 	writeFile(t, unsignedDir, "go.mod", "module example.com/x\n\ngo 1.23\n")
@@ -185,9 +188,57 @@ func TestInitDetectsSignoffFromHistory(t *testing.T) {
 	if err := runInit(unsignedDir, &out2); err != nil {
 		t.Fatalf("runInit (unsigned): %v", err)
 	}
-	// The default-off policy is not enshrined: no commits block in the written file.
-	if strings.Contains(read(t, filepath.Join(unsignedDir, "cairn.yaml")), "commits:") {
-		t.Errorf("unsigned history should not write a commits block:\n%s", read(t, filepath.Join(unsignedDir, "cairn.yaml")))
+	uRoot, _ := loadTree(t, unsignedDir).Resolve(".")
+	if uRoot.Commits == nil || uRoot.Commits.Convention != "conventional" || uRoot.Commits.Signoff {
+		t.Errorf("unsigned conventional history should record convention with sign-off off, got %+v", uRoot.Commits)
+	}
+
+	// Neither signed off nor conventional: nothing positively determined, so no commits block.
+	plainDir := t.TempDir()
+	gitInitWithUser(t, plainDir)
+	writeFile(t, plainDir, "go.mod", "module example.com/x\n\ngo 1.23\n")
+	for _, msg := range []string{"update stuff", "more wip"} {
+		commitWithSignoff(t, plainDir, msg, false)
+	}
+	var out3 bytes.Buffer
+	if err := runInit(plainDir, &out3); err != nil {
+		t.Fatalf("runInit (plain): %v", err)
+	}
+	if strings.Contains(read(t, filepath.Join(plainDir, "cairn.yaml")), "commits:") {
+		t.Errorf("unrecognisable history should not write a commits block:\n%s", read(t, filepath.Join(plainDir, "cairn.yaml")))
+	}
+}
+
+// TestInitDetectsChangelog: init records the changelog block when the repo carries a changelog
+// in a format Cairn recognises, and omits it when there is no changelog to learn from.
+func TestInitDetectsChangelog(t *testing.T) {
+	withDir := t.TempDir()
+	gitInitWithUser(t, withDir)
+	writeFile(t, withDir, "go.mod", "module example.com/x\n\ngo 1.23\n")
+	writeFile(t, withDir, "CHANGELOG.md", "# Changelog\n\n## [Unreleased]\n\n### Added\n- thing\n")
+	commitWithSignoff(t, withDir, "feat: one", false)
+	var out bytes.Buffer
+	if err := runInit(withDir, &out); err != nil {
+		t.Fatalf("runInit (with changelog): %v", err)
+	}
+	root, _ := loadTree(t, withDir).Resolve(".")
+	if root.Changelog == nil || root.Changelog.Standard != "keepachangelog" || root.Changelog.File != "CHANGELOG.md" {
+		t.Errorf("a keepachangelog CHANGELOG should be recorded, got %+v", root.Changelog)
+	}
+	if !strings.Contains(out.String(), "changelog:") {
+		t.Errorf("init output did not report the changelog detection:\n%s", out.String())
+	}
+
+	withoutDir := t.TempDir()
+	gitInitWithUser(t, withoutDir)
+	writeFile(t, withoutDir, "go.mod", "module example.com/x\n\ngo 1.23\n")
+	commitWithSignoff(t, withoutDir, "feat: one", false)
+	var out2 bytes.Buffer
+	if err := runInit(withoutDir, &out2); err != nil {
+		t.Fatalf("runInit (no changelog): %v", err)
+	}
+	if strings.Contains(read(t, filepath.Join(withoutDir, "cairn.yaml")), "changelog:") {
+		t.Errorf("a repo with no changelog should not write a changelog block:\n%s", read(t, filepath.Join(withoutDir, "cairn.yaml")))
 	}
 }
 

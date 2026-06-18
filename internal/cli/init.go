@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/IVIR3zaM/Cairn/internal/changelog"
 	"github.com/IVIR3zaM/Cairn/internal/commit"
 	"github.com/IVIR3zaM/Cairn/internal/config"
 	"github.com/IVIR3zaM/Cairn/internal/detect"
@@ -130,8 +131,15 @@ func reportInit(out io.Writer, base config.Directory, langs []string) {
 		n := len(base.VersionSync.Files[0].Patterns)
 		fmt.Fprintf(out, "  • version_sync: %d pattern(s) found in %s\n", n, versionSyncDoc)
 	}
-	if base.Commits != nil && base.Commits.Signoff {
-		fmt.Fprintln(out, "  • commits: sign-off enforced (your history signs off)")
+	if base.Commits != nil {
+		fmt.Fprintf(out, "  • commits: %s convention", base.Commits.Convention)
+		if base.Commits.Signoff {
+			fmt.Fprint(out, ", sign-off enforced (your history signs off)")
+		}
+		fmt.Fprintln(out)
+	}
+	if base.Changelog != nil {
+		fmt.Fprintf(out, "  • changelog: %s (%s)\n", base.Changelog.Standard, base.Changelog.File)
 	}
 }
 
@@ -187,7 +195,32 @@ func discoverConfig(wd string, fsys fs.FS, res *detect.Result) config.Directory 
 	if c := detectCommits(wd); c != nil {
 		base.Commits = c
 	}
+	if cl := detectChangelog(fsys); cl != nil {
+		base.Changelog = cl
+	}
 	return base
+}
+
+// changelogDoc is the standard changelog path init inspects — the same default `cairn bump`
+// promotes, so a recorded block points bump at the file it already found.
+const changelogDoc = "CHANGELOG.md"
+
+// detectChangelog records the changelog block when the repo carries a changelog Cairn
+// recognises, so the config states the format `cairn bump` will promote instead of leaning on a
+// silent default. It reads the file at the standard path and asks the changelog registry to
+// identify the format; an absent or unrecognised file yields nil — a discovered fact or nothing.
+// Both fields are always set: config resolves changelog as a unit, so a partial block would drop
+// one.
+func detectChangelog(fsys fs.FS) *config.Changelog {
+	data, err := fs.ReadFile(fsys, changelogDoc)
+	if err != nil {
+		return nil
+	}
+	std, ok := changelog.Detect(data)
+	if !ok {
+		return nil
+	}
+	return &config.Changelog{Standard: std, File: changelogDoc}
 }
 
 // detectLanguages records the languages detection found present, each enabled, as an editable
@@ -227,27 +260,79 @@ func detectVersionSync(fsys fs.FS, version string) *config.VersionSync {
 // handful.
 const signoffMajority = 0.5
 
+// conventionalMajority is the share of non-merge commits that must conform to a convention
+// before init records it. A handful of stragglers — a pre-adoption commit, a hand-edited hotfix
+// — shouldn't mask a history that plainly follows the convention.
+const conventionalMajority = 0.7
+
 // detectCommits learns the commit policy to record from the repo's existing history instead of
-// writing a blind default. It enables DCO sign-off only when the history shows it is the norm
-// (at least signoffMajority of commits carry a Signed-off-by trailer); otherwise it returns
-// nil so the generated cairn.yaml omits the commits block entirely and rides the in-code
-// default (conventional, no sign-off). When sign-off is enabled it writes a *complete* commits
-// block — convention included — because config resolves the commits block as a unit, so a
-// partial block would drop the convention. An empty/absent history yields nil: with nothing to
-// learn from, init makes no claim rather than guessing.
+// writing a blind default: the convention its messages follow and whether DCO sign-off is the
+// norm. It records a commits block when it can positively determine the convention (a strong
+// majority of non-merge commits conform to a registered validator) or when sign-off is the norm.
+// An unrecognisable, sign-off-less history — or no history at all — yields nil so the block is
+// omitted and the in-code default applies. The block is always written *complete* (convention,
+// signoff, validate_hook) because config resolves commits as a unit, so a partial block would
+// drop a field; validate_hook stays on so the commit-msg gate enforces the recorded convention.
 func detectCommits(wd string) *config.Commits {
 	history := gitLogMessages(wd, "", "")
 	if len(history) == 0 {
 		return nil
 	}
+	convention, known := detectConvention(history)
+	signoff := signedOffIsNorm(history)
+	if !known && !signoff {
+		return nil
+	}
+	if !known {
+		// Sign-off is the norm but the convention is unclear; record the default so the unit is
+		// complete rather than claiming a convention the history doesn't back.
+		convention = config.Default().Commits.Convention
+	}
+	return &config.Commits{Convention: convention, Signoff: signoff, ValidateHook: true}
+}
+
+// detectConvention reports the commit convention the history follows, when a strong majority of
+// its non-merge commits conform to a registered validator. conventional is the only validator
+// today, so it is the sole convention detectable now; an unrecognisable history yields ok=false
+// and init records no convention (the in-code default applies, unwritten).
+func detectConvention(history []string) (string, bool) {
+	for _, name := range commit.Conventions() {
+		v, ok := commit.ValidatorFor(name)
+		if !ok {
+			continue
+		}
+		total, conform := 0, 0
+		for _, m := range history {
+			if isMergeCommit(m) {
+				continue
+			}
+			total++
+			if v.Validate(m, false) == nil {
+				conform++
+			}
+		}
+		if total > 0 && float64(conform) >= conventionalMajority*float64(total) {
+			return name, true
+		}
+	}
+	return "", false
+}
+
+// signedOffIsNorm reports whether DCO sign-off is the repo's norm — at least signoffMajority of
+// commits carry a Signed-off-by trailer. history must be non-empty.
+func signedOffIsNorm(history []string) bool {
 	signed := 0
 	for _, m := range history {
 		if commit.IsSignedOff(m) {
 			signed++
 		}
 	}
-	if float64(signed) < signoffMajority*float64(len(history)) {
-		return nil // sign-off is not the norm here — the default (off) applies, unwritten
-	}
-	return &config.Commits{Convention: "conventional", Signoff: true, ValidateHook: true}
+	return float64(signed) >= signoffMajority*float64(len(history))
+}
+
+// isMergeCommit reports whether msg is a default git merge commit ("Merge branch …", "Merge pull
+// request …"), which never follows a commit convention and so must not count against one when
+// init samples history for convention detection.
+func isMergeCommit(msg string) bool {
+	return strings.HasPrefix(strings.TrimSpace(msg), "Merge ")
 }

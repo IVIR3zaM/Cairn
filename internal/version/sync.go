@@ -235,13 +235,28 @@ func tokenSpan(s string, start, end int) (int, int) {
 // trimming stops at the version so a tiny "(1.2.3)" collapses to a non-distinctive bare number.
 const syncTrim = "`'\"()[]{}<>.,;:!?*"
 
+// bracketOpen/bracketClose map a wrapper bracket to its partner. A leading opening bracket
+// whose closer sits inside the kept span (and vice versa) is a balanced wrapper that belongs to
+// the pattern — e.g. the tag delimiters in "<version>1.2.3</version>" — so it is kept rather
+// than peeled, which would otherwise leave the asymmetric "version>{VERSION}</version".
+var (
+	bracketOpen  = map[byte]byte{'<': '>', '(': ')', '[': ']', '{': '}'}
+	bracketClose = map[byte]byte{'>': '<', ')': '(', ']': '[', '}': '{'}
+)
+
 // trimWrappers peels syncTrim bytes off [ls,le)'s edges without crossing the version span
-// [start,end).
+// [start,end). A balanced bracket pair wrapping the whole span is kept intact.
 func trimWrappers(s string, ls, le, start, end int) (int, int) {
 	for ls < start && isTrimByte(s[ls]) {
+		if c, ok := bracketOpen[s[ls]]; ok && strings.IndexByte(s[ls+1:le], c) >= 0 {
+			break
+		}
 		ls++
 	}
 	for le > end && isTrimByte(s[le-1]) {
+		if o, ok := bracketClose[s[le-1]]; ok && strings.LastIndexByte(s[ls:le-1], o) >= 0 {
+			break
+		}
 		le--
 	}
 	return ls, le

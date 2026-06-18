@@ -57,6 +57,23 @@ func WriterFor(standard string) (Writer, bool) {
 	return w, ok
 }
 
+// Detect reports which registered changelog standard `content` follows, matching each
+// standard's distinctive signature. It lets `cairn init` record the changelog block only when
+// the file is recognisably a known format — a confident fact, never a guess. Standards are
+// tried in sorted order for determinism; ok=false when nothing matches (or content is empty).
+func Detect(content []byte) (string, bool) {
+	for _, name := range Standards() {
+		s, isStyle := registry[name].(style)
+		if !isStyle || s.signature == nil {
+			continue
+		}
+		if s.signature.Match(content) {
+			return name, true
+		}
+	}
+	return "", false
+}
+
 // Standards lists the registered standard keys (sorted) so the init wizard and docs can
 // enumerate choices without a hardcoded list.
 func Standards() []string {
