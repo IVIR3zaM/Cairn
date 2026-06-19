@@ -1,0 +1,49 @@
+# GoReleaser config — builds cross-platform `cairn` binaries and publishes a GitHub Release
+# on every pushed `vX.Y.Z` tag. Run `goreleaser check` to validate, `goreleaser release
+# --snapshot --clean` to dry-run locally. Docs: https://goreleaser.com
+version: 2
+
+project_name: cairn
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: cairn
+    main: ./cmd/cairn
+    binary: cairn
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    # Stamp the version into the binary so `cairn --version` reports the tag.
+    ldflags:
+      - -s -w
+      - -X github.com/IVIR3zaM/Cairn/internal/cli.version={{.Version}}
+
+archives:
+  - id: cairn
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - README.md
+      - LICENSE
+      - CHANGELOG.md
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  # The human-curated CHANGELOG.md is the source of truth; don't auto-generate notes.
+  disable: true
+
+release:
+  github:
+    owner: IVIR3zaM
+    name: Cairn
+  draft: false
+  prerelease: auto
