@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Cairn now **dogfoods itself**: a root `cairn.yaml` drives its own pre-commit hook and CI, both
+  running the same `cairn verify`. CI builds the binary from source and installs the Go quality
+  tools, so local and CI never drift; the README status reflects the dogfooding (iteration 11).
 - `cairn init` now confirms the repo `version:` and never silently commits a guess: a new
   `detectBaselineVersion` seeds the baseline only from a value the repo actually states — a
   root-level (`.`) manifest, or the **dominant** (most common) version across a workspace's packages

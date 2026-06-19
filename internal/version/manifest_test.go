@@ -130,7 +130,7 @@ func TestDetectVersion(t *testing.T) {
 
 func TestDetectVersionFallsBackWhenNoneFound(t *testing.T) {
 	fsys := fstest.MapFS{
-		"go.mod":        {Data: []byte("module x\n")},                                                  // no registered manager
+		"go.mod":        {Data: []byte("module x\n")},                                                   // no registered manager
 		"child/pom.xml": {Data: []byte("<project><parent><version>1.0.0</version></parent></project>")}, // inheriting child, no own version
 	}
 	if got, ok := DetectVersion(fsys, []ManifestUnit{

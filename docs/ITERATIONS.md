@@ -577,7 +577,7 @@ with the interactive flow when a TTY is present.
 **Acceptance:** interactive run is navigable and concise; a newly registered standard appears
 as a choice without editing the wizard.
 
-## [ ] 11 — Dogfood + docs polish
+## [x] 11 — Dogfood + docs polish
 **Goal:** Cairn uses Cairn; docs match reality.
 **Read:** AGENTS.md · README.md · docs/ARCHITECTURE.md
 **Steps:** Add Cairn's own `cairn.yaml`; wire its hook + CI to `cairn verify`; update

@@ -103,8 +103,9 @@ Both the git hook and CI call the same `cairn verify`, so local and CI never dri
 
 ## Status
 
-🚧 Pre-implementation. This repository currently contains the design and the iteration
-plan; the CLI is built one small iteration at a time. See
+🐢 Built iteratively and now **dogfooding itself**: Cairn's own [cairn.yaml](cairn.yaml)
+drives its pre-commit hook and [CI](.github/workflows/ci.yml), both running the same
+`cairn verify`. The CLI grows one small iteration at a time — see
 [docs/ITERATIONS.md](docs/ITERATIONS.md).
 
 ## License
