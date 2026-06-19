@@ -188,10 +188,20 @@ func DetectSyncPatterns(doc, version string) []string {
 		}
 		ls, le := tokenSpan(doc, start, end)
 		ls, le = trimWrappers(doc, ls, le, start, end)
+		prefix, suffix := doc[ls:start], doc[end:le]
+		// A value whose own token isn't distinctive (e.g. "^0.1.2") can still be a tracked
+		// occurrence when it's the value of a "key:" on the same line — an install snippet's
+		// dependency coordinate like "didwebvh: ^0.1.2". Swallow the key so the pattern becomes
+		// "didwebvh: ^{VERSION}" instead of being dropped.
+		if !distinctiveContext(prefix, suffix) {
+			if kls, ok := keyPrefixStart(doc, ls); ok {
+				ls = kls
+				prefix = doc[ls:start]
+			}
+		}
 		if le-ls > maxSyncToken {
 			continue
 		}
-		prefix, suffix := doc[ls:start], doc[end:le]
 		if !distinctiveContext(prefix, suffix) {
 			continue
 		}
@@ -216,6 +226,38 @@ func literalIndexes(s, sub string) []int {
 		off += i + len(sub)
 	}
 	return idx
+}
+
+// keyPrefixStart extends a token's left edge to swallow a "key:" label sitting just before it on the
+// same line — the dependency name in an install snippet like "didwebvh: ^1.2.3" — so a key-value
+// whose value alone isn't distinctive still yields a useful pattern ("didwebvh: {VERSION}"). It
+// returns the new left edge (the first byte of the key) and ok=true only when the text immediately
+// before ls (across same-line spaces) is a "<key>:" — which keeps generic prose like "upgrade to
+// 1.2.3" from matching, since that has no colon-terminated key.
+func keyPrefixStart(doc string, ls int) (int, bool) {
+	i := ls
+	for i > 0 && (doc[i-1] == ' ' || doc[i-1] == '\t') {
+		i--
+	}
+	if i == 0 || doc[i-1] != ':' {
+		return 0, false
+	}
+	i-- // step over the colon
+	keyEnd := i
+	for i > 0 && isKeyByte(doc[i-1]) {
+		i--
+	}
+	if i == keyEnd { // a ":" with no key before it
+		return 0, false
+	}
+	return i, true
+}
+
+// isKeyByte reports whether b can be part of a dependency/coordinate key (a name, not whitespace or
+// the colon itself).
+func isKeyByte(b byte) bool {
+	return b == '_' || b == '-' || b == '.' ||
+		(b >= '0' && b <= '9') || (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
 }
 
 // tokenSpan expands [start,end) outward to the surrounding whitespace-delimited token.

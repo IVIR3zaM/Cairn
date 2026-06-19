@@ -38,6 +38,15 @@ func TestRunInitYesWritesConfigHooksAndCI(t *testing.T) {
 		t.Errorf("init did not record the detected go language: %+v", root.Languages)
 	}
 
+	// The written config documents itself: a header comment per block, and the hooks/CI it
+	// installs are recorded as editable rows (not silently riding the default).
+	cfg := read(t, filepath.Join(dir, "cairn.yaml"))
+	for _, want := range []string{"# ", "hooks:", "pre_commit:", "commit_msg:", "ci:", "provider: github"} {
+		if !strings.Contains(cfg, want) {
+			t.Errorf("generated cairn.yaml missing %q:\n%s", want, cfg)
+		}
+	}
+
 	// hooks installed and executable; CI workflow generated.
 	hook := filepath.Join(dir, ".cairn/hooks/pre-commit")
 	if info, err := os.Stat(hook); err != nil || info.Mode()&0o111 == 0 {
@@ -112,6 +121,104 @@ func TestInitDefaultsVersionWhenNoManifest(t *testing.T) {
 	}
 	if root.Version == nil || *root.Version != "0.1.0" {
 		t.Errorf("init fallback version = %v, want 0.1.0", root.Version)
+	}
+}
+
+// TestInitMonorepoBaselineIgnoresSubPackageVersion: in a monorepo whose root carries no
+// version-bearing manifest (a plain go.mod) but a sub-package declares a version, the repo baseline
+// must fall back to 0.1.0 rather than leaking the sub-package's version. The sub-package's version
+// is recorded separately as a per-directory independent-version override.
+func TestInitMonorepoBaselineIgnoresSubPackageVersion(t *testing.T) {
+	dir := t.TempDir()
+	if out, err := exec.Command("git", "-C", dir, "init").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	// Root go.mod declares no version; the sub-package's package.json does.
+	writeFile(t, dir, "go.mod", "module example.com/x\n\ngo 1.23\n")
+	writeFile(t, dir, "packages/foo/package.json", `{"name":"foo","version":"3.1.0"}`)
+
+	var out bytes.Buffer
+	if err := runInit(dir, &out); err != nil {
+		t.Fatalf("runInit: %v", err)
+	}
+
+	tree := loadTree(t, dir)
+	root, ok := tree.Resolve(".")
+	if !ok {
+		t.Fatal("root resolved as pruned")
+	}
+	if root.Version == nil || *root.Version != "0.1.0" {
+		t.Errorf("monorepo baseline version = %v, want 0.1.0 (sub-package version leaked)", root.Version)
+	}
+
+	// The sub-package keeps its real version as a per-directory override.
+	sub, ok := tree.Resolve("packages/foo")
+	if !ok {
+		t.Fatal("packages/foo resolved as pruned")
+	}
+	if sub.Version == nil || *sub.Version != "3.1.0" {
+		t.Errorf("packages/foo version = %v, want 3.1.0", sub.Version)
+	}
+}
+
+// TestInitMonorepoBaselineFromSharedVersion: a workspace whose root carries no version-bearing
+// manifest but whose packages all declare the *same* version adopts that shared version as the
+// baseline (the project's release line) rather than the 0.1.0 placeholder — the didwebvh-dart case.
+func TestInitMonorepoBaselineFromSharedVersion(t *testing.T) {
+	dir := t.TempDir()
+	if out, err := exec.Command("git", "-C", dir, "init").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	// Root is a versionless pub workspace; every package shares 0.2.1.
+	writeFile(t, dir, "pubspec.yaml", "name: _workspace\nworkspace:\n")
+	writeFile(t, dir, "packages/a/pubspec.yaml", "name: a\nversion: 0.2.1\n")
+	writeFile(t, dir, "packages/b/pubspec.yaml", "name: b\nversion: 0.2.1\n")
+	writeFile(t, dir, "packages/c/pubspec.yaml", "name: c\nversion: 0.2.1\n")
+
+	var out bytes.Buffer
+	if err := runInit(dir, &out); err != nil {
+		t.Fatalf("runInit: %v", err)
+	}
+
+	root, ok := loadTree(t, dir).Resolve(".")
+	if !ok {
+		t.Fatal("root resolved as pruned")
+	}
+	if root.Version == nil || *root.Version != "0.2.1" {
+		t.Errorf("monorepo baseline = %v, want 0.2.1 (the shared package version)", root.Version)
+	}
+}
+
+// TestInitMonorepoBaselineFromDominantVersion: when packages disagree, init seeds the baseline from
+// the *dominant* (most common) version — the didwebvh-dart case, where three dart packages at 0.1.2
+// sit alongside a lagging java mirror at 0.3.1. The baseline follows the majority (0.1.2) and the
+// outlier rides a per-directory override.
+func TestInitMonorepoBaselineFromDominantVersion(t *testing.T) {
+	dir := t.TempDir()
+	if out, err := exec.Command("git", "-C", dir, "init").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	writeFile(t, dir, "pubspec.yaml", "name: _ws\nworkspace:\n")
+	writeFile(t, dir, "packages/a/pubspec.yaml", "name: a\nversion: 0.1.2\n")
+	writeFile(t, dir, "packages/b/pubspec.yaml", "name: b\nversion: 0.1.2\n")
+	writeFile(t, dir, "reference/java/pom.xml", "<project><modelVersion>4.0.0</modelVersion><artifactId>x</artifactId><version>0.3.1</version></project>\n")
+
+	var out bytes.Buffer
+	if err := runInit(dir, &out); err != nil {
+		t.Fatalf("runInit: %v", err)
+	}
+
+	tree := loadTree(t, dir)
+	root, _ := tree.Resolve(".")
+	if root.Version == nil || *root.Version != "0.1.2" {
+		t.Errorf("baseline = %v, want dominant 0.1.2", root.Version)
+	}
+	java, ok := tree.Resolve("reference/java")
+	if !ok {
+		t.Fatal("reference/java pruned")
+	}
+	if java.Version == nil || *java.Version != "0.3.1" {
+		t.Errorf("lagging java port = %v, want its own 0.3.1 override", java.Version)
 	}
 }
 
@@ -266,13 +373,15 @@ func commitWithSignoff(t *testing.T, dir, msg string, signoff bool) {
 	}
 }
 
-// TestInitWithoutYesPointsAtFlag: the bare command (no TTY wizard yet) errors actionably toward
-// --yes rather than doing nothing — the 10b-i interactive gate until 10b-ii lands.
+// TestInitWithoutYesPointsAtFlag: with no terminal to drive the wizard and no --yes, the bare
+// command errors actionably toward --yes rather than blocking on input that will never come. A
+// non-TTY stdin (here a buffer) takes the non-interactive path.
 func TestInitWithoutYesPointsAtFlag(t *testing.T) {
 	cmd := newRootCmd()
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
+	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetArgs([]string{"init"})
 	err := cmd.Execute()
 	if err == nil {

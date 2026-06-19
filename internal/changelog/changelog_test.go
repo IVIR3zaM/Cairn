@@ -17,25 +17,32 @@ func mustParse(t *testing.T, s string) version.Version {
 	return v
 }
 
-// Detect recognises a Keep a Changelog file by its bracketed headings (both an `[Unreleased]`
-// section and a released `[x.y.z] - date` heading), and reports nothing for a foreign or empty
-// file — so `cairn init` records the changelog block only when it is confident of the format.
-func TestDetectKeepAChangelog(t *testing.T) {
-	for _, body := range []string{
-		"# Changelog\n\n## [Unreleased]\n\n### Added\n- thing\n",
-		"# Changelog\n\n## [1.2.3] - 2026-06-09\n\n### Fixed\n- bug\n",
-	} {
-		if got, ok := Detect([]byte(body)); !ok || got != "keepachangelog" {
-			t.Errorf("Detect(%q) = %q, %v; want keepachangelog, true", body, got, ok)
-		}
+// Detect distinguishes the registered standards by their signature heading shape: bracketed
+// headings are Keep a Changelog, non-bracketed `## Unreleased`/`## x.y.z` headings are the pub.dev
+// (dart) style, and a foreign or empty file matches nothing — so `cairn init` records a changelog
+// block (repo-wide or per directory) only when it is confident of the format.
+func TestDetect(t *testing.T) {
+	cases := []struct {
+		body string
+		want string // "" means no match expected
+	}{
+		{"# Changelog\n\n## [Unreleased]\n\n### Added\n- thing\n", "keepachangelog"},
+		{"# Changelog\n\n## [1.2.3] - 2026-06-09\n\n### Fixed\n- bug\n", "keepachangelog"},
+		{"# Changelog\n\n## Unreleased\n\n- plain heading, no brackets\n", "dart"},
+		{"# Changelog\n\n## 1.2.3 - 2026-06-09\n\n- bug\n", "dart"},
+		{"", ""},
+		{"just some prose with no changelog headings at all\n", ""},
 	}
-	for _, body := range []string{
-		"",
-		"# Changelog\n\n## Unreleased\n\n- plain heading, no brackets\n",
-		"just some prose with no changelog headings at all\n",
-	} {
-		if got, ok := Detect([]byte(body)); ok {
-			t.Errorf("Detect(%q) = %q, true; want no match", body, got)
+	for _, c := range cases {
+		got, ok := Detect([]byte(c.body))
+		if c.want == "" {
+			if ok {
+				t.Errorf("Detect(%q) = %q, true; want no match", c.body, got)
+			}
+			continue
+		}
+		if !ok || got != c.want {
+			t.Errorf("Detect(%q) = %q, %v; want %q, true", c.body, got, ok, c.want)
 		}
 	}
 }

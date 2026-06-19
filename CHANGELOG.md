@@ -8,6 +8,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `cairn init` now confirms the repo `version:` and never silently commits a guess: a new
+  `detectBaselineVersion` seeds the baseline only from a value the repo actually states — a
+  root-level (`.`) manifest, or the **dominant** (most common) version across a workspace's packages
+  when the root carries none (e.g. three Dart packages at `0.1.2` next to a lagging Java mirror at
+  `0.3.1` ⇒ baseline `0.1.2`, with the outlier kept as its own per-directory override). When no
+  confident version exists the wizard asks for it (a lone sub-package's version never leaks into the
+  baseline); `--yes` falls back to `0.1.0` only as a last resort. The wizard's findings now list
+  each sub-directory's detected version.
+- `cairn init` wizard asks for the repo-wide `verify.strict` default before the per-directory pass,
+  so each directory inherits it — pressing Enter on a directory's strict question records no
+  override, and only a deliberate change writes a `languages.<name>.strict` delta.
+- `version_sync` detection recognises the `key: ^version` install-snippet idiom — a dependency
+  coordinate like `didwebvh: ^1.2.3` now yields `didwebvh: ^{VERSION}`. It stays conservative: only
+  a colon-terminated key on the same line is swallowed, so generic prose (`upgrade to 1.2.3`) never
+  becomes a pattern.
+- `cairn init` interactive wizard (10b-ii): on a terminal the bare command now runs a short guided
+  flow — show detected findings (including the detected sub-directories), then confirm/change the
+  standards (commit convention, changelog standard, CI provider) and the wiring steps (hooks, CI).
+  Each menu is sourced from its registry, so a newly registered standard appears as a choice without
+  editing the wizard; choices overlay the discovered baseline. `--yes` still accepts smart defaults
+  non-interactively; a non-TTY without `--yes` points at `--yes`.
+- `cairn init` per-directory rule sets: both the wizard and `--yes` now scan the detected sub-units
+  and emit a `directories.<path>` override block carrying the full schema — independent versioning
+  (own `version:` ⇒ own tag/changelog) + scheme, a different changelog standard (e.g. each Dart
+  package on pub.dev style while the root stays Keep a Changelog), per-language strictness, and
+  disablement. `--yes` records every per-directory *fact* it can detect (a member whose CHANGELOG
+  format or manifest version differs from the baseline); the wizard additionally collects the
+  decisions a repo can't detect (disable a subtree, override scheme/strictness). A plain
+  single-package repo stays a flat baseline.
+- `changelog.Detect` now recognises the pub.dev (`dart`) format by its non-bracketed
+  `## Unreleased` / `## x.y.z` signature heading (previously only Keep a Changelog was detectable),
+  so `cairn init` can record per-package dart changelogs automatically.
 - `cairn init --yes` (10b-i): non-interactive onboarding that detects languages, writes a valid
   schema-2 `cairn.yaml` with the detected languages enabled (`config.InitConfig`, round-trips
   through `LoadTree`), installs the configured git hooks, generates the CI workflow, and prints
@@ -38,14 +70,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reconciliation is a follow-up because Java detection is single-root.
 
 ### Changed
+- The `cairn.yaml` `cairn init` writes is now self-documenting: every top-level block carries a
+  header comment explaining what it's for and the options it accepts (pulled from the live
+  registries). It also records the `hooks:` and `ci:` it installs/generates as editable rows (rather
+  than installing them with no row to see), omits a `changelog.file` that equals the default
+  `CHANGELOG.md` (the resolver fills it back in), and renders the `directories:` overrides *after*
+  the baseline so the file reads top-down. `Changelog.File` and the `Hooks` list fields gained
+  `omitempty`.
 - `cairn init` now writes a **smart, discovered** `cairn.yaml` rather than a wall of defaults: it
   records only the facts it positively determined — the detected `version`, the languages present
   (each enabled, as an editable scaffold), the `version_sync` patterns found in the README, and a
   `commits` block when history justifies one. Settings it cannot discover are omitted and ride the
   in-code defaults via the resolved baseline, so an omitted key behaves identically without
-  cluttering the file. `InitConfig`'s signature changed to `InitConfig(base Directory) ([]byte,
-  error)` (the caller now assembles the discovered baseline; the unused `*Config` return was
-  dropped).
+  cluttering the file. `InitConfig`'s signature is now `InitConfig(base Directory, dirs
+  map[string]Directory, comments map[string]string) ([]byte, error)` (the caller assembles the
+  discovered baseline plus per-directory overrides and the header comments; the unused `*Config`
+  return was dropped).
 - Rewrote `cairn.example.yaml` for schema 2 (top-level `version:`/`schema:`, the `languages`
   block as tool/standard knobs, a `directories:` per-directory override section) and documented
   that `init` writes a smart discovered file, not this fully-annotated reference.
@@ -60,6 +100,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   legacy `version.NewResolver(config.Project)` constructor; `NewResolverFromTree` is the only one.
 
 ### Fixed
+- `cairn init` no longer seeds the repo baseline `version:` from an arbitrary sub-package: the
+  manifest scan considers only root-level (`.`) manifests and is deterministic (previously the
+  baseline was read from `res.Languages` map iteration, so a sub-package's version could leak into
+  the repo baseline in a nondeterministic order).
+- `cairn init` no longer enables a language repo-wide when its only home is a disabled directory: a
+  language confined to a subtree the wizard turned off (e.g. a `reference/…` Java port) is pruned
+  from the baseline `languages:` list instead of being blindly enabled.
+- The `cairn init` wizard re-scans the README for `version_sync` against the version the user
+  actually chose, instead of leaving the patterns wired to the pre-prompt guess.
 - The generated `commit-msg` hook called `cairn commit-lint "$@"`, but no such command existed,
   so every commit aborted with "unknown command". Added the `commit-lint <message-file>` command:
   it resolves the convention and sign-off requirement from the repo's `cairn.yaml` (per-directory

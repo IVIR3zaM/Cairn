@@ -12,7 +12,7 @@ import (
 // the file). A drift between the written bytes and what LoadTree accepts would silently produce
 // a config `cairn init` can't reload.
 func TestInitConfigRoundTrips(t *testing.T) {
-	data, err := InitConfig(Directory{Version: strptr("0.1.0")})
+	data, err := InitConfig(Directory{Version: strptr("0.1.0")}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,6 +49,69 @@ func TestInitConfigRoundTrips(t *testing.T) {
 	}
 }
 
+// TestInitConfigDirectoriesComeLast: the per-path `directories:` map is rendered after the repo
+// baseline so the file reads top-down — repo-wide settings first, per-directory overrides at the
+// end — rather than burying the baseline under the overrides.
+func TestInitConfigDirectoriesComeLast(t *testing.T) {
+	off := false
+	data, err := InitConfig(
+		Directory{Version: strptr("0.1.0"), Languages: map[string]Language{"dart": {Enabled: true}}},
+		map[string]Directory{"pkgs/x": {Enabled: &off}},
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(data)
+	li, di := strings.Index(s, "languages:"), strings.Index(s, "directories:")
+	if li < 0 || di < 0 {
+		t.Fatalf("expected both languages: and directories: in output:\n%s", s)
+	}
+	if di < li {
+		t.Errorf("directories: should be rendered after the baseline, got:\n%s", s)
+	}
+}
+
+// TestInitConfigOmitsDefaultChangelogFile: a changelog block whose file is the default CHANGELOG.md
+// renders the standard alone (no redundant `file:` row), while a non-default file is kept — and
+// either way the written bytes still resolve to a usable changelog file via the cascade.
+func TestInitConfigOmitsDefaultChangelogFile(t *testing.T) {
+	def, err := InitConfig(Directory{Version: strptr("0.1.0"), Changelog: &Changelog{Standard: "dart", File: "CHANGELOG.md"}}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(def), "file:") {
+		t.Errorf("default changelog file should be omitted:\n%s", def)
+	}
+	if !strings.Contains(string(def), "standard: dart") {
+		t.Errorf("changelog standard should still be written:\n%s", def)
+	}
+
+	custom, err := InitConfig(Directory{Version: strptr("0.1.0"), Changelog: &Changelog{Standard: "dart", File: "HISTORY.md"}}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(custom), "file: HISTORY.md") {
+		t.Errorf("non-default changelog file should be kept:\n%s", custom)
+	}
+}
+
+// TestInitConfigAnnotatesBlocks: a comments map writes an explanatory header above each matching
+// top-level block, so the generated file documents why each row exists. The bytes still parse.
+func TestInitConfigAnnotatesBlocks(t *testing.T) {
+	comments := map[string]string{"version": "the project version"}
+	data, err := InitConfig(Directory{Version: strptr("0.1.0")}, nil, comments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "# the project version") {
+		t.Errorf("comment not written above version:\n%s", data)
+	}
+	if _, err := LoadTree(fstest.MapFS{"cairn.yaml": {Data: data}}); err != nil {
+		t.Fatalf("annotated config does not load: %v", err)
+	}
+}
+
 // TestInitConfigWritesDetectedCommits: when init determines a non-default commit policy (DCO
 // sign-off), it records a complete, reloadable commits block — convention included, so the
 // wholesale block resolution keeps validating messages.
@@ -56,7 +119,7 @@ func TestInitConfigWritesDetectedCommits(t *testing.T) {
 	data, err := InitConfig(Directory{
 		Version: strptr("0.1.0"),
 		Commits: &Commits{Convention: "conventional", Signoff: true, ValidateHook: true},
-	})
+	}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

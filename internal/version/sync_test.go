@@ -178,6 +178,32 @@ func TestDetectSyncPatterns(t *testing.T) {
 	}
 }
 
+// TestDetectSyncPatternsKeyValue: a version that is the value of a "key:" on the same line — an
+// install snippet's dependency coordinate — is captured by swallowing the key, even though the value
+// token alone ("^1.2.3") carries no distinctive context. Generic prose with no colon-key stays
+// rejected so the rule doesn't match arbitrary numbers.
+func TestDetectSyncPatternsKeyValue(t *testing.T) {
+	doc := "```yaml\ndependencies:\n" +
+		"  didwebvh: ^1.2.3\n" +
+		"  didwebvh_signing_local: ^1.2.3   # only if you use the local-key signer\n" +
+		"```\n" +
+		"then upgrade to 1.2.3 manually.\n"
+
+	got := DetectSyncPatterns(doc, "1.2.3")
+
+	for _, w := range []string{"didwebvh: ^{VERSION}", "didwebvh_signing_local: ^{VERSION}"} {
+		if !contains(got, w) {
+			t.Errorf("missing key-value pattern %q in %q", w, got)
+		}
+	}
+	// "upgrade to 1.2.3" has no colon-terminated key, so it must not become a pattern.
+	for _, p := range got {
+		if strings.Contains(p, "to ") {
+			t.Errorf("prose without a key: leaked into a pattern: %q", p)
+		}
+	}
+}
+
 func TestDetectSyncPatternsEmpty(t *testing.T) {
 	if got := DetectSyncPatterns("no versions here", "1.2.3"); got != nil {
 		t.Errorf("want nil for a doc without the version, got %q", got)

@@ -568,7 +568,7 @@ errors pointing at `--yes` until 10b-ii lands the wizard.
 schema-2 config listing the detected languages, installs runnable hooks, generates a CI
 workflow, and is non-destructive/idempotent (an existing cairn.yaml is kept).
 
-### [ ] 10b-ii — Interactive `init` wizard
+### [x] 10b-ii — Interactive `init` wizard
 **Read:** AGENTS.md · docs/ARCHITECTURE.md (Onboarding, extension points) · internal/{detect,config,wiring,report} · internal/cli/init.go
 **Steps:** Detect → show findings → multiselect features + standards (smart defaults from
 detection; choices enumerated from the changelog/commit/CI registries) → write `cairn.yaml`

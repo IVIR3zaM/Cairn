@@ -94,7 +94,7 @@ type Commits struct {
 // repo-wide `packages` style is no longer needed here.
 type Changelog struct {
 	Standard string `yaml:"standard"`
-	File     string `yaml:"file"`
+	File     string `yaml:"file,omitempty"`
 }
 
 // VersionSyncFile is one doc whose version patterns must stay honest.
@@ -110,9 +110,9 @@ type VersionSync struct {
 
 // Hooks lists the cairn jobs wired into each git hook.
 type Hooks struct {
-	PreCommit []string `yaml:"pre_commit"`
-	CommitMsg []string `yaml:"commit_msg"`
-	PrePush   []string `yaml:"pre_push"`
+	PreCommit []string `yaml:"pre_commit,omitempty"`
+	CommitMsg []string `yaml:"commit_msg,omitempty"`
+	PrePush   []string `yaml:"pre_push,omitempty"`
 }
 
 // CI configures generated continuous-integration workflows.

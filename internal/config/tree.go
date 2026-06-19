@@ -32,11 +32,13 @@ type Tree struct {
 // rootDoc is the schema-2 root cairn.yaml: the inline baseline override block plus the
 // `directories:` map of per-path overrides. A nested `<path>/cairn.yaml` unmarshals into the
 // same shape and contributes only its inline block (its `directories:` is ignored — a nested
-// file is just an override block).
+// file is just an override block). The inline baseline is declared before Directories so it
+// marshals first — the repo-wide settings read at the top of the file, the per-path overrides
+// at the end.
 type rootDoc struct {
-	Schema      string               `yaml:"schema,omitempty"`
-	Directories map[string]Directory `yaml:"directories,omitempty"`
+	Schema      string `yaml:"schema,omitempty"`
 	Directory   `yaml:",inline"`
+	Directories map[string]Directory `yaml:"directories,omitempty"`
 }
 
 // LoadTree reads the repo's cairn.yaml from fsys (rooted at the repo root), discovers nested
