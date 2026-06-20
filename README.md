@@ -49,19 +49,19 @@ library, and a Python project.
 
 ## Install
 
-> **Status: `v0.1.0` (first release).** Pre-built binaries and a Homebrew tap are planned;
-> until they land, install from source with Go ≥ 1.23.
+> **Status: `v0.1.0` (first release).** Install from source (Go ≥ 1.23), Homebrew, or a
+> pre-built binary from the [releases page](https://github.com/IVIR3zaM/Cairn/releases).
 
 ```bash
 # from source (always works)
 go install github.com/IVIR3zaM/Cairn/cmd/cairn@v0.1.0   # pin the release
 go install github.com/IVIR3zaM/Cairn/cmd/cairn@latest   # or track the latest tag
 
-# <!-- INSTALL-GUIDE: 0.1.0 — fill in once release artifacts exist -->
-# download a pre-built binary
+# Homebrew
+brew install IVIR3zaM/tap/cairn
+
+# pre-built binary
 #   curl -sSL https://github.com/IVIR3zaM/Cairn/releases/download/v0.1.0/cairn_<os>_<arch>.tar.gz | tar xz
-# or Homebrew (planned)
-#   brew install IVIR3zaM/tap/cairn
 ```
 
 `cairn` shells out to each language's standard tools, so install the ones you use

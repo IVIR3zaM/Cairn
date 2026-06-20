@@ -47,3 +47,23 @@ release:
     name: Cairn
   draft: false
   prerelease: auto
+
+# Publish a Homebrew formula to the IVIR3zaM/homebrew-tap repo on each (non-prerelease)
+# release, so `brew install IVIR3zaM/tap/cairn` works. Requires:
+#   1. an existing GitHub repo `IVIR3zaM/homebrew-tap`
+#   2. a PAT with write access to it, exposed to the release workflow as
+#      HOMEBREW_TAP_GITHUB_TOKEN (the default GITHUB_TOKEN can't push to another repo).
+brews:
+  - name: cairn
+    repository:
+      owner: IVIR3zaM
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Formula
+    homepage: "https://github.com/IVIR3zaM/Cairn"
+    description: "One orchestrator for quality, versioning, changelog, and commit hygiene across every language"
+    license: "Apache-2.0"
+    # Don't push a formula for pre-release tags (rc/beta).
+    skip_upload: auto
+    test: |
+      system "#{bin}/cairn", "--version"

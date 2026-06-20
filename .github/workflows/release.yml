@@ -29,3 +29,6 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # PAT with write access to IVIR3zaM/homebrew-tap, so GoReleaser can push the
+          # Homebrew formula there (the default GITHUB_TOKEN only reaches this repo).
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
